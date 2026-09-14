@@ -18,9 +18,10 @@ import { createCarClips, IDLE_LENGTH } from "./carAnimations";
  * The rig is a stack of transform nodes, each with exactly one writer:
  *
  *   root   — lane position and heading. The simulation owns this.
- *   idle   — the left-right shudder.  AnimationGroup, only while stopped.
- *   brake  — the one-shot nose dive.  AnimationGroup.
- *   crash  — the spin and tumble.     Written per frame, only while wrecked.
+ *   idle   — the left-right shudder.   AnimationGroup, only while stopped.
+ *   brake  — the one-shot nose dive.   AnimationGroup.
+ *   move   — the one-shot nose lift.   AnimationGroup.
+ *   crash  — the spin and tumble.      Written per frame, only while wrecked.
  *   body   — the model, aligned so forward is +Z and the wheels sit on y = 0.
  *
  * Giving every animation its own node is what lets a shudder and a dive overlap
@@ -45,6 +46,8 @@ export type CarRig = {
   setIdle: (weight: number) => void;
   /** Fires the one-shot brake dive. */
   playBrake: () => void;
+  /** Fires the one-shot pull-away lift. */
+  playMove: () => void;
   dispose: () => void;
 };
 
@@ -112,10 +115,12 @@ export function createCarFactory(
     const root = new TransformNode(`car${id}`, scene);
     const idle = new TransformNode(`car${id}.idle`, scene);
     const brake = new TransformNode(`car${id}.brake`, scene);
+    const move = new TransformNode(`car${id}.move`, scene);
     const crash = new TransformNode(`car${id}.crash`, scene);
     idle.parent = root;
     brake.parent = idle;
-    crash.parent = brake;
+    move.parent = brake;
+    crash.parent = move;
 
     const body = template.clone(`car${id}.body`, crash, false);
     if (!body) throw new Error(`Could not clone ${template.name}`);
@@ -180,7 +185,8 @@ export function createCarFactory(
     root.parent = space;
 
     const idleLayer = loopingLayer(scene, `car${id}.idle`, clips.idle, idle, ANIM.idle.speed);
-    const brakeLayer = oneShotLayer(scene, `car${id}.brake`, clips.brake, brake);
+    const brakeLayer = oneShotLayer(scene, `car${id}.brake`, clips.brake, brake, ANIM.brake.speed);
+    const moveLayer = oneShotLayer(scene, `car${id}.move`, clips.move, move, ANIM.move.speed);
 
     // Only the shell casts. Wheels, glass and trim sit inside the body's own
     // shadow, so adding them would cost a draw per cascade for nothing.
@@ -198,14 +204,12 @@ export function createCarFactory(
       width,
       wheelRadius: wheelRadius || 0.36,
       setIdle: (weight) => blend(idleLayer, weight),
-      playBrake: () => {
-        brakeLayer.group.stop();
-        brakeLayer.group.play(false);
-        brakeLayer.group.weight = 1;
-      },
+      playBrake: () => fire(brakeLayer, moveLayer),
+      playMove: () => fire(moveLayer, brakeLayer),
       dispose: () => {
         idleLayer.group.dispose();
         brakeLayer.group.dispose();
+        moveLayer.group.dispose();
         if (shadows) {
           const map = shadows.getShadowMap();
           if (map?.renderList) {
@@ -259,11 +263,30 @@ function oneShotLayer(
   name: string,
   clips: Animation[],
   node: TransformNode,
+  speed: number,
 ): Layer {
   const group = new AnimationGroup(name, scene);
   for (const clip of clips) group.addTargetedAnimation(clip, node);
-  group.speedRatio = ANIM.brake.speed;
+  group.speedRatio = speed;
   return { node, group, running: false };
+}
+
+/**
+ * Plays a one-shot clip from the start, and clears its opposite number.
+ *
+ * The dive and the lift both pitch the car, and a car can go from braking to
+ * pulling away in well under the length of either. Cancelling the other one —
+ * and resetting its node, since a stopped group keeps writing nothing but leaves
+ * its last pose behind — is what stops a half-finished dive from being frozen
+ * into the car as it sets off.
+ */
+function fire(target: Layer, opposite: Layer): void {
+  opposite.group.stop();
+  reset(opposite.node);
+
+  target.group.stop();
+  target.group.play(false);
+  target.group.weight = 1;
 }
 
 /**

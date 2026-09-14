@@ -24,7 +24,7 @@ Babylon in it. `createCityScene.ts` is the only place the two meet.
 | `city.ts` | Loads the `.glb`, hides `Cars`, repairs materials, freezes the static world. |
 | `props.ts` | Reads the authored `props` markers and hides their placeholder cubes. |
 | `carFactory.ts` | Clones the hidden `Cars` models into drivable, animatable rigs. |
-| `carAnimations.ts` | The two keyframed clips — idle and brake — built once and shared. |
+| `carAnimations.ts` | The three keyframed clips — idle, brake, move — built once and shared. |
 | `traffic.ts` | Lanes, car-following, the light gate, waves, collisions and crashes. |
 | `trafficLight.ts` | The billboarded cartoon signal. |
 | `crashEffects.ts` | Generated spark, flash and smoke bursts. |
@@ -37,11 +37,33 @@ Each road is configured on its own, because they do genuinely different jobs.
 
 **`ROAD_ONE` — the cross traffic.** It never stops: not for the signal, not for
 the car in front. It has no following model at all, so there is nothing for it to
-rear-end itself with. Its dials are `speed`, `spawnGap`, and `breakTime` — the
-seconds of empty road left behind each car. That break *is* the gap mechanism:
-since these cars never brake, the openings the player crosses in have to be built
-in at the moment a car joins the road. `breakTime` is therefore the main
-difficulty dial — longer means more room to cross.
+rear-end itself with.
+
+Its cars arrive in **waves**. `carsPerWave` sets how many travel together —
+counted across *both* rows, so a wave of six is six cars over the road, not six
+in each. `spawnGap` is the bumper gap inside a wave, and `breakTime` is the
+seconds of empty road added before the next one, which is the window the player
+crosses in.
+
+Cars join at a **fixed gate**: `spawnGap` behind the road's start marker, never
+further back. The break is extra clearance the gate waits for *on top of*
+`spawnGap`, armed on every row at once so the gap opens right across the road.
+Both details matter and both were once wrong — laying waves out backwards from
+the last car pushed the tail of a busy road a hundred metres off the back of it,
+and expressing the break as a plain time hold made it vanish entirely whenever
+`spawnGap` happened to be the larger of the two.
+
+`speed` is drawn **once per wave**, not per car. That is not cosmetic: with no
+following model, two cars in one wave at different speeds would simply close on
+each other and collide. Varying it between waves is what keeps the stream from
+looking metronomic.
+
+One interaction to keep in mind: a car takes up about `spawnGap + 5` metres and
+roodOne is 77 m long, so `spawnGap` decides how many cars a row can hold — six at
+8, two at 40. Set it high enough and a wave is spread over more road than exists,
+and the traffic reads as evenly spaced cars rather than clumps with gaps between
+them. The pool sizing accounts for `carsPerWave` either way, so the waves are
+still exactly the size asked for; they just stop looking like waves.
 
 **`ROAD_TWO` — the road the signal governs.** These cars queue behind the stop
 line and behind each other, so they get the full model: `speed`, `minGap`,
@@ -63,20 +85,24 @@ actually have produced.
 
 ## How the car animation works
 
-Two authored clips, each played by its own AnimationGroup on its own node:
+Three authored clips, each played by its own AnimationGroup on its own node:
 
 | clip | when | shape |
 | --- | --- | --- |
 | `idle` | stopped | shudders left and right, looping |
-| `brake` | pulling up | a one-shot nose dive that rebounds past level |
+| `brake` | pulling up | one-shot: the nose dives and rebounds past level |
+| `move` | pulling away | one-shot: the mirror of the dive — the nose lifts, then settles |
 
-**A moving car animates nothing.** Only its wheels turn. That is the cheapest
-possible state, and it is the state most cars are in most of the time — so with
-20 cars there are 40 groups of which only the stopped ones ever run.
+`move` fires on the transition out of standstill, which is what "when the car
+starts moving" means and keeps the clip off every small mid-cruise adjustment. It
+is deliberately slower and softer than `brake`: stopping is an event, setting off
+is a roll. The two are opposites on the same axis, so firing either one cancels
+and resets the other — otherwise a half-finished dive would freeze into the car
+as it pulled away.
 
-The shake is a *yaw* swing rather than a roll because the camera looks down on the
-junction: from up there a car rocking on its springs barely reads, while one
-wagging its tail is unmistakable.
+**A car cruising along animates nothing.** Only its wheels turn. That is the
+cheapest possible state, and it is the state most cars are in most of the time —
+measured with 36 cars, 108 groups existed and 14 were running.
 
 The rig stacks the layers so each node has exactly one writer —
 `root → idle → brake → crash → body`. That is what lets a shudder and a dive
@@ -100,14 +126,16 @@ frame.
 Everything is in `ANIM`, two numbers per clip:
 
 ```ts
-idle:  { speed, swing }   // shakes per second, radians to each side
-brake: { speed, dip, trigger }
+idle:  { speed, swing }        // shakes per second, radians to each side
+brake: { speed, dip, trigger } // playback rate, radians the nose drops
+move:  { speed, lift }         // playback rate, radians the nose rises
 ```
 
 Clip lengths are fixed and `speed` is applied as the group's playback rate, so
 `idle.speed` means cycles per second directly rather than being tangled up in
 keyframe spacing. `brake.trigger` is the deceleration, in units per second
-squared, that sets the dive off.
+squared, that sets the dive off; `move` needs no trigger, because "stopped, and
+now moving" is not a threshold to tune.
 
 ## Performance
 
@@ -118,7 +146,7 @@ The frame was rebuilt around where the draw calls were actually being multiplied
 | draw calls | 2692 | 977 |
 | shadow casters | 1737 | 407 |
 | post-process passes | 64 | 33 |
-| animation groups running | — | only the stopped cars, of 40 |
+| animation groups running | — | only the stopped cars, of 108 |
 
 The wins, in order of size: shadow casting is filtered to geometry near the
 junction that is neither flat nor tiny (road tiles and trash bags cast nothing you

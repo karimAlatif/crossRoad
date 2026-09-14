@@ -2,8 +2,9 @@ import { Animation, EasingFunction, SineEase } from "@babylonjs/core";
 import { ANIM } from "./config";
 
 /**
- * The two keyframe clips a car can play: shuddering while it waits, and diving
- * on its nose as it pulls up. A car that is moving plays neither.
+ * The three keyframe clips a car can play: shuddering while it waits, diving on
+ * its nose as it pulls up, and lifting it again as it sets off. A car already
+ * rolling along plays none of them.
  *
  * Both are authored as keyframes rather than computed per frame so the motion
  * can have cartoon timing, and so `ANIM` can drive them with two numbers each —
@@ -16,6 +17,7 @@ import { ANIM } from "./config";
 export type CarClips = {
   idle: Animation[];
   brake: Animation[];
+  move: Animation[];
 };
 
 /**
@@ -25,9 +27,11 @@ export type CarClips = {
  */
 const IDLE_FRAMES = 60;
 const BRAKE_FRAMES = 45;
+/** Longer than the dive on purpose: pulling away should read as smoother. */
+const MOVE_FRAMES = 55;
 
 export function createCarClips(): CarClips {
-  return { idle: idleClip(), brake: brakeClip() };
+  return { idle: idleClip(), brake: brakeClip(), move: moveClip() };
 }
 
 export const IDLE_LENGTH = IDLE_FRAMES;
@@ -53,11 +57,7 @@ function clip(
 }
 
 /**
- * Standing still: a left-right shudder.
- *
- * This is a yaw swing rather than a roll because the camera looks down on the
- * junction — from up there a car rocking on its springs barely reads, while one
- * wagging its tail is unmistakable.
+ * Standing still: a left-right shudder, rocking the car on its springs.
  */
 function idleClip(): Animation[] {
   const F = IDLE_FRAMES;
@@ -90,6 +90,29 @@ function brakeClip(): Animation[] {
       { frame: F * 0.22, value: dip },
       { frame: F * 0.55, value: -dip * 0.35 },
       { frame: F * 0.78, value: dip * 0.15 },
+      { frame: F, value: 0 },
+    ]),
+  ];
+}
+
+/**
+ * Pulling away: the mirror of the dive.
+ *
+ * Negative rotation.x pitches the nose up, so the car squats on its back wheels
+ * as it sets off and then settles. The keyframes are the brake's, reflected and
+ * stretched out — a later peak and a much smaller rebound — because a standing
+ * start should look smooth where a stop looks abrupt.
+ */
+function moveClip(): Animation[] {
+  const F = MOVE_FRAMES;
+  const { lift } = ANIM.move;
+
+  return [
+    clip("move.lift", "rotation.x", Animation.ANIMATIONLOOPMODE_CONSTANT, [
+      { frame: 0, value: 0 },
+      { frame: F * 0.3, value: -lift },
+      { frame: F * 0.62, value: lift * 0.22 },
+      { frame: F * 0.84, value: -lift * 0.07 },
       { frame: F, value: 0 },
     ]),
   ];

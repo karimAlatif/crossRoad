@@ -36,7 +36,9 @@ type Rules = {
   free: boolean;
   speed: Range;
   spawnGap: number;
-  /** Seconds of empty road left behind each car. Free lanes only. */
+  /** Cars per wave. Free lanes only; null means every car joins on its own. */
+  carsPerWave: Range | null;
+  /** Seconds of empty road left between waves. Free lanes only. */
   breakTime: Range | null;
   /** Everything below is the following model, and is unused on a free lane. */
   minGap: number;
@@ -63,6 +65,28 @@ type Car = {
   /** Extra heading picked up by spinning out. */
   yaw: number;
   crash: Crash | null;
+  /** Reused collision footprint, so a frame allocates nothing. */
+  box: Box;
+};
+
+type Box = { x: number; z: number; fx: number; fz: number; hf: number; hr: number };
+
+/**
+ * Wave state shared by every row of one road.
+ *
+ * It lives on the road rather than the row for two reasons. `carsPerWave` counts
+ * cars across the whole road, not per row — a wave of four is four cars spread
+ * over both rows, not four in each. And the break that ends a wave has to open
+ * on both rows at once, or there is never a moment when the whole road is clear
+ * and the player has nothing to cross into.
+ */
+type Wave = {
+  /** Cars still owed to the wave being laid down, counted across the road. */
+  left: number;
+  /** Cruise speed shared by every car in the current wave. */
+  speed: number;
+  /** The road's rows, so the break holds all of them at once. */
+  lanes: Lane[];
 };
 
 type Lane = {
@@ -76,8 +100,22 @@ type Lane = {
   /** Distance along the lane of the stop line, or null if the light never stops it. */
   stopS: number | null;
   rules: Rules;
+  wave: Wave;
+  /**
+   * Extra clearance this row waits for before its next car, on top of
+   * `spawnGap` — the break between waves. Held per row rather than on the wave
+   * so both rows open their gap, which is what makes the road clear right
+   * across for a moment instead of one row at a time.
+   */
+  breakGap: number;
+  /** True while the signal is holding this row short of the junction. */
+  gated: boolean;
+  /** How many cars this row runs. */
+  poolSize: number;
   /** Ordered from the car furthest along the lane to the one furthest back. */
   cars: Car[];
+  /** Cars off the road, hidden, waiting their turn at the entry gate. */
+  waiting: Car[];
 };
 
 export function createTraffic(
@@ -95,12 +133,28 @@ export function createTraffic(
   let crashes = 0;
 
   for (const road of roads) {
-    for (const side of [1, -1] as const) {
-      lanes.push(buildLane(road, side, () => factory.spawn(picked++)));
-    }
+    const wave: Wave = { left: 0, speed: 0, lanes: [] };
+    const rows = ([1, -1] as const).map((side) => createLane(road, side, wave));
+    wave.lanes = rows;
+    // Open the first wave properly. Left at zero, the very first car admitted
+    // would take the counter negative and end its own wave, so every road began
+    // with a wave of exactly one car.
+    startWave(wave, rows[0].rules, false);
+    lanes.push(...rows);
   }
 
-  const cars = lanes.flatMap((lane) => lane.cars);
+  // Every car starts off the road, hidden, queued at its row's gate. Nothing is
+  // ever placed by hand: the opening state is produced by running the real rules
+  // forward, so the road cannot start in a configuration its own logic would
+  // never reach.
+  const cars: Car[] = [];
+  for (const lane of lanes) {
+    for (let i = 0; i < lane.poolSize; i++) {
+      const car = makeCar(lane, factory.spawn(picked++));
+      lane.waiting.push(car);
+      cars.push(car);
+    }
+  }
 
   /* ------------------------------------------------------------------ drive -- */
 
@@ -138,6 +192,11 @@ export function createTraffic(
         const rate = want > car.v ? rules.accel : rules.brake;
         const next = moveTowards(car.v, want, rate * dt);
 
+        // The lift plays once, on the transition out of standstill — that is what
+        // "when the car starts moving" means, and it keeps the clip off every
+        // small mid-cruise adjustment.
+        if (car.v <= STOPPED && next > STOPPED) car.rig.playMove();
+
         // Fire the dive once when a stop begins, and re-arm only after the car
         // has stopped shedding speed — otherwise it would retrigger every frame.
         const decel = dt > 0 ? (car.v - next) / dt : 0;
@@ -158,7 +217,7 @@ export function createTraffic(
     // Once the leader is clear of the end it becomes the new tail.
     const head = lane.cars[0];
     if (head && !head.crash && head.s - head.rig.length / 2 > lane.length) {
-      recycle(lane, 0);
+      retire(lane, 0);
     }
   };
 
@@ -178,20 +237,17 @@ export function createTraffic(
     car.v = 0;
   };
 
-  const recycle = (lane: Lane, index: number) => {
+  /** Takes a car off the road and puts it back in its row's queue, hidden. */
+  const retire = (lane: Lane, index: number) => {
     const [car] = lane.cars.splice(index, 1);
-    const tail = lane.cars[lane.cars.length - 1];
-    const gap = joinGap(lane.rules, car.cruise);
-
-    car.s = tail ? tail.s - gap - (tail.rig.length + car.rig.length) / 2 : -gap;
-    car.v = lane.rules.free ? car.cruise : Math.min(car.v, car.cruise);
+    car.v = 0;
     car.yaw = 0;
+    car.settle = 0;
     car.braking = false;
     car.crash = null;
-    car.rig.crash.position.setAll(0);
-    car.rig.crash.rotation.setAll(0);
-    car.rig.crash.scaling.setAll(1);
-    lane.cars.push(car);
+    car.rig.setIdle(0);
+    car.rig.root.setEnabled(false);
+    lane.waiting.push(car);
   };
 
   /* ----------------------------------------------------------------- render -- */
@@ -226,7 +282,7 @@ export function createTraffic(
       // A wreck does not shudder, so the clip stops costing anything.
       rig.setIdle(0);
     } else {
-      const settled = car.v < 0.35 ? 1 : 0;
+      const settled = car.v <= STOPPED ? 1 : 0;
       car.settle = moveTowards(car.settle, settled, dt / ANIM.blend);
       rig.setIdle(car.settle);
     }
@@ -240,35 +296,39 @@ export function createTraffic(
 
   /* -------------------------------------------------------------- collisions -- */
 
-  type Box = { car: Car; x: number; z: number; fx: number; fz: number; hf: number; hr: number };
-  const boxes: Box[] = cars.map((car) => ({ car, x: 0, z: 0, fx: 0, fz: 0, hf: 0, hr: 0 }));
+  /** Rebuilt each frame from the cars actually on the road. */
+  const active: Car[] = [];
 
   const collide = () => {
-    for (const box of boxes) {
-      const car = box.car;
-      const heading = car.lane.yaw + car.yaw;
-      box.x = car.lane.originX + car.lane.dirX * car.s;
-      box.z = car.lane.originZ + car.lane.dirZ * car.s;
-      box.fx = Math.sin(heading);
-      box.fz = Math.cos(heading);
-      box.hf = (car.rig.length / 2) * TRAFFIC.hitboxScale;
-      box.hr = (car.rig.width / 2) * TRAFFIC.hitboxScale;
+    active.length = 0;
+    for (const lane of lanes) {
+      for (const car of lane.cars) {
+        const box = car.box;
+        const heading = lane.yaw + car.yaw;
+        box.x = lane.originX + lane.dirX * car.s;
+        box.z = lane.originZ + lane.dirZ * car.s;
+        box.fx = Math.sin(heading);
+        box.fz = Math.cos(heading);
+        box.hf = (car.rig.length / 2) * TRAFFIC.hitboxScale;
+        box.hr = (car.rig.width / 2) * TRAFFIC.hitboxScale;
+        active.push(car);
+      }
     }
 
-    for (let i = 0; i < boxes.length; i++) {
-      for (let j = i + 1; j < boxes.length; j++) {
-        const a = boxes[i];
-        const b = boxes[j];
-        if (a.car.crash && b.car.crash) continue;
+    for (let i = 0; i < active.length; i++) {
+      for (let j = i + 1; j < active.length; j++) {
+        const a = active[i];
+        const b = active[j];
+        if (a.crash && b.crash) continue;
 
         // Cheap reject on bounding circles before the exact test.
-        const dx = b.x - a.x;
-        const dz = b.z - a.z;
-        const reach = a.hf + a.hr + b.hf + b.hr;
+        const dx = b.box.x - a.box.x;
+        const dz = b.box.z - a.box.z;
+        const reach = a.box.hf + a.box.hr + b.box.hf + b.box.hr;
         if (dx * dx + dz * dz > reach * reach) continue;
-        if (!overlaps(a, b, dx, dz)) continue;
+        if (!overlaps(a.box, b.box, dx, dz)) continue;
 
-        impact(a.car, b.car);
+        impact(a, b);
       }
     }
   };
@@ -300,7 +360,11 @@ export function createTraffic(
 
   /* ------------------------------------------------------------------- loop -- */
 
-  const update = (dt: number, isGreen: boolean) => {
+  let now = 0;
+
+  const step = (dt: number, isGreen: boolean, collisions: boolean) => {
+    now += dt;
+
     for (const lane of lanes) drive(lane, dt, isGreen);
 
     // Clear wrecks that have finished poofing, back to front so splicing is safe.
@@ -309,14 +373,27 @@ export function createTraffic(
         const crash = lane.cars[i].crash;
         if (crash && crash.t >= CRASH.holdSeconds + CRASH.poofSeconds) {
           effects.puff(lane.cars[i].rig.root.getAbsolutePosition());
-          recycle(lane, i);
+          retire(lane, i);
         }
       }
     }
 
-    for (const car of cars) place(car, dt);
-    collide();
+    for (const lane of lanes) {
+      admit(lane);
+      for (const car of lane.cars) place(car, dt);
+    }
+
+    if (collisions) collide();
   };
+
+  // Fill the road by running the real rules forward before the first frame, with
+  // collisions off so the opening state can never contain a wreck. Cheap: a few
+  // hundred iterations of arithmetic over a couple of dozen cars.
+  for (let i = 0; i < Math.round(WARM_UP_SECONDS * 60); i++) {
+    step(1 / 60, LIGHT.startsGreen, false);
+  }
+
+  const update = (dt: number, isGreen: boolean) => step(dt, isGreen, true);
 
   return {
     update,
@@ -339,6 +416,7 @@ function rulesFor(road: RoadSpec): Rules {
       free: false,
       speed: ROAD_TWO.speed,
       spawnGap: ROAD_TWO.spawnGap,
+      carsPerWave: null,
       breakTime: null,
       minGap: ROAD_TWO.minGap,
       accel: ROAD_TWO.accel,
@@ -350,6 +428,7 @@ function rulesFor(road: RoadSpec): Rules {
     free: true,
     speed: ROAD_ONE.speed,
     spawnGap: ROAD_ONE.spawnGap,
+    carsPerWave: ROAD_ONE.carsPerWave,
     breakTime: ROAD_ONE.breakTime,
     minGap: 0,
     accel: 0,
@@ -359,26 +438,115 @@ function rulesFor(road: RoadSpec): Rules {
 }
 
 /**
- * Distance to leave in front of a car joining the back of a lane.
+ * Where the next car joins the back of a lane, and how fast it travels.
  *
- * On roodOne that is a bumper gap plus the break — the seconds of empty road the
- * player gets to cross in — turned into a distance at the joining car's own
- * speed. That is the whole gap mechanism: roodOne never brakes, so its openings
- * have to be built in at the moment a car joins.
+ * On roodOne this is the whole gap mechanism. Cars arrive in waves: the first of
+ * a wave is held back by `breakTime` — the seconds of empty road the player gets
+ * to cross in — and picks a fresh speed, and the rest of the wave follows it
+ * nose to tail at `spawnGap` sharing that same speed.
+ *
+ * Sharing it is not cosmetic. This road has no following model, so two cars in
+ * one wave at different speeds would close on each other and eventually collide.
  */
-function joinGap(rules: Rules, cruise: number): number {
-  const pause = rules.breakTime ? between(rules.breakTime) * cruise : 0;
-  return rules.spawnGap + pause;
+/**
+ * Where a car enters its row: nose on the `spawnGap` offset, just short of the
+ * road's start marker.
+ *
+ * This is a fixed point, not a gap measured backwards from the last car. That
+ * distinction is the whole reason the gate exists — laying a wave out behind the
+ * previous one used to push the tail of a busy road hundreds of metres off the
+ * back of it.
+ */
+function entryPoint(lane: Lane, rig: CarRig): number {
+  return -(lane.rules.spawnGap + rig.length / 2);
 }
 
-/** The same gap with the break at its average — used to size a lane's car pool,
- *  which must not come out differently on every run. */
-function meanJoinGap(rules: Rules): number {
-  const pause = rules.breakTime ? mid(rules.breakTime) * mid(rules.speed) : 0;
-  return rules.spawnGap + pause;
+/**
+ * Lets one waiting car onto the road if the gate is open.
+ *
+ * Two things hold it shut: the break between waves, which is timed and shared by
+ * every row of the road, and the car already on the road, which has to be clear
+ * of the entry by `spawnGap` before anything follows it through.
+ */
+function admit(lane: Lane): void {
+  const car = lane.waiting[0];
+  if (!car) return;
+
+  const rules = lane.rules;
+  const wave = lane.wave;
+  const s = entryPoint(lane, car.rig);
+
+  // The break is extra clearance *on top of* the normal spawn gap, not an
+  // alternative to it. Expressed as a plain hold it silently vanished whenever
+  // `spawnGap` was the larger of the two, which made every gap identical and the
+  // waves impossible to see.
+  const needed = rules.spawnGap + lane.breakGap;
+  const tail = lane.cars[lane.cars.length - 1];
+  if (tail && tail.s - tail.rig.length / 2 - (s + car.rig.length / 2) < needed) {
+    return;
+  }
+
+  lane.waiting.shift();
+  lane.breakGap = 0;
+  car.s = s;
+  car.cruise = rules.carsPerWave ? wave.speed : between(rules.speed);
+  car.v = car.cruise;
+  car.yaw = 0;
+  car.settle = 0;
+  car.braking = false;
+  car.crash = null;
+  car.rig.crash.position.setAll(0);
+  car.rig.crash.rotation.setAll(0);
+  car.rig.crash.scaling.setAll(1);
+  car.rig.root.setEnabled(true);
+  lane.cars.push(car);
+
+  if (!rules.carsPerWave) return;
+
+  // One counter for the whole road, so `carsPerWave` is a count across both rows
+  // rather than per row.
+  wave.left--;
+  if (wave.left <= 0) startWave(wave, rules, true);
 }
 
-function buildLane(road: RoadSpec, side: 1 | -1, make: () => CarRig): Lane {
+/**
+ * Begins the next wave: its size, the speed every car in it will share, and the
+ * break that precedes it.
+ */
+function startWave(wave: Wave, rules: Rules, withBreak: boolean): void {
+  if (!rules.carsPerWave) return;
+  wave.left = Math.max(1, Math.round(between(rules.carsPerWave)));
+  wave.speed = between(rules.speed);
+  if (!withBreak || !rules.breakTime) return;
+
+  // Arm every row, so the gap opens right across the road.
+  const gap = between(rules.breakTime) * wave.speed;
+  for (const row of wave.lanes) row.breakGap = gap;
+}
+
+/**
+ * How many cars one row runs.
+ *
+ * Two things set the floor. Density is the obvious one: enough to fill the row
+ * nose to tail at `spawnGap`. The second is easy to miss and was what broke the
+ * waves — a row must also be able to hold its share of the *largest* wave. With
+ * a wide `spawnGap` the density term alone came out at three cars a row, so a
+ * wave of eight simply had no cars to be made of.
+ *
+ * The gate decides how many are actually on the road at any moment, so this only
+ * has to be an upper bound. Cars over it sit hidden and cost nothing, which makes
+ * erring high free and erring low a silent cap on the wave settings.
+ */
+function poolSize(rules: Rules, length: number): number {
+  const density = Math.ceil(length / (rules.spawnGap + APPROX_CAR_LENGTH)) + 1;
+  const share = rules.carsPerWave ? Math.ceil(rules.carsPerWave.max / ROWS_PER_ROAD) + 1 : 0;
+  return Math.max(3, density, share);
+}
+
+/** Both roads run two rows, one either side of their centre line. */
+const ROWS_PER_ROAD = 2;
+
+function createLane(road: RoadSpec, side: 1 | -1, wave: Wave): Lane {
   const delta = road.end.subtract(road.start);
   delta.y = 0;
   const length = delta.length();
@@ -388,8 +556,9 @@ function buildLane(road: RoadSpec, side: 1 | -1, make: () => CarRig): Lane {
   const perp = new Vector3(dir.z, 0, -dir.x);
   const origin = road.start.add(perp.scale(side * TRAFFIC.laneOffset));
   const rules = rulesFor(road);
+  const stopS = road.cross ? Vector3.Dot(road.cross.subtract(road.start), dir) : null;
 
-  const lane: Lane = {
+  return {
     name: `${road.name}${side > 0 ? "A" : "B"}`,
     originX: origin.x,
     originZ: origin.z,
@@ -399,73 +568,33 @@ function buildLane(road: RoadSpec, side: 1 | -1, make: () => CarRig): Lane {
     // and every car model faces +Z: its front wheels sit at positive z.
     yaw: Math.atan2(dir.x, dir.z),
     length,
-    stopS: road.cross ? Vector3.Dot(road.cross.subtract(road.start), dir) : null,
+    stopS,
     rules,
+    wave,
+    breakGap: 0,
+    gated: stopS !== null && !LIGHT.startsGreen,
+    poolSize: poolSize(rules, length),
     cars: [],
+    waiting: [],
   };
+}
 
-  // Seed the lane so the road is busy on the very first frame.
-  //
-  // A lane the light governs is seeded from its stop line backwards rather than
-  // from the far end: seeding past the line would drop cars into the junction
-  // while the signal is red, and the cross traffic — which never stops — would
-  // pile straight into them before the player had touched anything.
-  const gated = lane.stopS !== null && !LIGHT.startsGreen;
-  const top = gated ? lane.stopS! : length;
-
-  // Size the pool from the pitch a joining car is given, so the lane fills at the
-  // density it will actually settle into. A free lane gets one spare, to keep a
-  // car ready to enter while the road ahead is still emptying.
-  const meanPitch = meanJoinGap(rules) + APPROX_CAR_LENGTH;
-  const count = Math.max(3, Math.ceil(length / meanPitch) + (rules.free ? 1 : 0));
-
-  let s = top;
-  let previous: { rig: CarRig; s: number } | null = null;
-
-  for (let i = 0; i < count; i++) {
-    const rig = make();
-    const cruise = between(rules.speed);
-
-    if (!previous) {
-      // `s` is a car's centre but the stop line is judged against its nose, so
-      // the first car of a queue has to be pulled back half its own length.
-      // Seeding it centred on the line put its nose past it, which read as
-      // "already committed" and sent the lead car through a red light.
-      if (gated) s = top - rig.length / 2 - QUEUE_CLEARANCE;
-    } else {
-      s -= joinGap(rules, cruise) + (previous.rig.length + rig.length) / 2;
-    }
-
-    // Seed the speed from the same braking law the simulation drives by, so the
-    // opening state is one the physics could actually have produced. Handing a
-    // car cruise speed while parking it on the stop line gave it no room to pull
-    // up, and it drove straight through the red into the cross traffic.
-    let v = cruise;
-    if (!rules.free) {
-      const nose = s + rig.length / 2;
-      const toStop = gated ? approach(lane.stopS! - nose - 0.25, rules) : Infinity;
-      const toLeader = previous
-        ? approach(previous.s - previous.rig.length / 2 - nose - rules.minGap, rules)
-        : Infinity;
-      v = Math.min(cruise, toStop, toLeader);
-    }
-
-    lane.cars.push({
-      rig,
-      lane,
-      s,
-      v,
-      cruise,
-      roll: Math.random() * Math.PI * 2,
-      settle: 0,
-      braking: false,
-      yaw: 0,
-      crash: null,
-    });
-    previous = { rig, s };
-  }
-
-  return lane;
+/** Builds one car for a row's pool. It starts off the road, hidden. */
+function makeCar(lane: Lane, rig: CarRig): Car {
+  rig.root.setEnabled(false);
+  return {
+    rig,
+    lane,
+    s: entryPoint(lane, rig),
+    v: 0,
+    cruise: mid(lane.rules.speed),
+    roll: Math.random() * Math.PI * 2,
+    settle: 0,
+    braking: false,
+    yaw: 0,
+    crash: null,
+    box: { x: 0, z: 0, fx: 0, fz: 0, hf: 0, hr: 0 },
+  };
 }
 
 /**
@@ -503,16 +632,19 @@ function overlaps(
   return true;
 }
 
+/** At or below this a car counts as standing still: it shudders, and the next
+ *  time it moves it plays the pull-away lift. */
+const STOPPED = 0.35;
+
+/**
+ * Simulated seconds run at construction so the road opens busy. Long enough for a
+ * car to cross the longest road several times over and for the queue to settle.
+ */
+const WARM_UP_SECONDS = 25;
+
 /** Rough car length, used only to size a lane's car pool before any exist. */
 const APPROX_CAR_LENGTH = 5;
 
-/**
- * Slack left between the lead car's nose and the stop line when a queue is
- * seeded. Parking it flush put the nose exactly on the line, where the strict
- * "has it crossed yet" test came down to floating-point noise — and on the side
- * that lost, the lead car treated itself as committed and drove the red.
- */
-const QUEUE_CLEARANCE = 0.6;
 
 const mid = (range: Range) => (range.min + range.max) / 2;
 

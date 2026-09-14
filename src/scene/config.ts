@@ -170,16 +170,34 @@ export const TRAFFIC = {
  * created by braking, which is why this road cannot rear-end itself.
  */
 export const ROAD_ONE = {
-  /** Each car picks a cruise speed from this range and holds it. */
-  speed: { min: 15, max: 20 },
+  /** How many cars travel together in one wave. */
+  carsPerWave: { min: 4, max: 8 },
   /**
-   * Seconds of empty road left between one car and the next — the break in the
-   * traffic. This is the window to run the junction in, so it is the main dial
-   * for how hard the game is: longer means more room to cross.
+   * Cruise speed, drawn once per wave rather than per car.
+   *
+   * It has to be per wave: this road has no following model, so two cars in the
+   * same wave at different speeds would simply drive into each other. Varying it
+   * between waves is what keeps the stream from looking metronomic.
    */
-  breakTime: { min: 1.1, max: 2.6 },
-  /** Bumper gap on top of that break, so cars never join nose to tail. */
-  spawnGap: 8,
+  speed: { min: 20, max: 23 },
+  /**
+   * Seconds of empty road between one wave and the next. This is the window to
+   * run the junction in, so it is the main dial for how hard the game is:
+   * longer means more room to cross.
+   */
+  breakTime: { min: 10000, max: 10000 },
+  /**
+   * Bumper gap between cars inside a wave, and the offset behind the road's start
+   * marker where every car enters. Nothing is ever created further back than this.
+   *
+   * It is what decides whether a wave reads as a clump. A car takes up about
+   * `spawnGap + 5` metres and roodOne is 77 m long, so at 8 the road holds about
+   * six cars a row and a wave is plainly a group; at 40 it holds two, and a wave
+   * of eight is spread over more road than exists. The break between waves stays
+   * correct either way — it is added on top of this gap — but it stops looking
+   * like a break in a *clump* once the clump is longer than the road.
+   */
+  spawnGap: 5,
 };
 
 /**
@@ -187,15 +205,15 @@ export const ROAD_ONE = {
  * other, and pull away when the light goes green, so they need the full model.
  */
 export const ROAD_TWO = {
-  speed: { min: 15, max: 20 },
+  speed: { min: 20, max: 20 },
   /** Bumper-to-bumper distance a queued car keeps. */
-  minGap: 1.8,
+  minGap: .85,
   /** Bumper gap left when a car joins the back of the road. */
   spawnGap: 10,
   /** How briskly a car pulls away, in units per second squared. */
-  accel: 6,
+  accel: 80,
   /** How hard it can slow down. Needed by `comfort` below. */
-  brake: 15,
+  brake: 60,
   /**
    * Fraction of `brake` a driver plans with when deciding how early to slow for
    * the car ahead or for the stop line. Below 1 so there is always braking left
@@ -285,10 +303,25 @@ export const ANIM = {
   /** Pulling up: the nose slopes down and springs back out of it. */
   brake: {
     /** Playback rate of the dive. Higher is snappier. */
-    speed: 1.3,
+    speed: .85,
     /** How far the nose drops, in radians. 0.2 is a strong dive. */
-    dip: 0.22,
+    dip: 0.45,
     /** Deceleration that sets it off, in units per second squared. */
     trigger: 6,
+  },
+
+  /**
+   * Pulling away: the mirror of the dive. The nose lifts as the car squats on
+   * its back wheels, then settles. Plays once, the moment a stopped car starts
+   * moving again — so on roodTwo it is what a green light looks like.
+   *
+   * Deliberately slower and softer than `brake`: stopping is an event, setting
+   * off is a roll.
+   */
+  move: {
+    /** Playback rate of the lift. Lower is smoother. */
+    speed: 0.85,
+    /** How far the nose rises, in radians. The mirror of `brake.dip`. */
+    lift: 0.45,
   },
 };
