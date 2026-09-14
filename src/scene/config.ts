@@ -307,8 +307,15 @@ export const ANIM = {
     speed: .85,
     /** How far the nose drops, in radians. 0.2 is a strong dive. */
     dip: 0.45,
-    /** Deceleration that sets it off, in units per second squared. */
-    trigger: 6,
+    /**
+     * How hard a car must be braking for the dive to play, as a fraction of that
+     * road's own `brake` rate. 0.6 means "shedding speed at 60% of flat out".
+     *
+     * A fraction rather than a deceleration on purpose: an absolute figure has to
+     * be kept in step by hand with `ROAD_TWO.brake`, and the moment that rate is
+     * retuned the trigger silently becomes far too eager or far too deaf.
+     */
+    trigger: 0.6,
   },
 
   /**

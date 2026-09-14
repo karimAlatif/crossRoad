@@ -163,7 +163,7 @@ export function createTraffic(
 
   /* ------------------------------------------------------------------ drive -- */
 
-  const drive = (lane: Lane, dt: number, isGreen: boolean) => {
+  const drive = (lane: Lane, dt: number, isGreen: boolean, live: boolean) => {
     const rules = lane.rules;
 
     for (let i = 0; i < lane.cars.length; i++) {
@@ -200,15 +200,22 @@ export function createTraffic(
         // The lift plays once, on the transition out of standstill — that is what
         // "when the car starts moving" means, and it keeps the clip off every
         // small mid-cruise adjustment.
-        if (car.v <= STOPPED && next > STOPPED) car.rig.playMove();
+        if (live && car.v <= STOPPED && next > STOPPED) car.rig.playMove();
 
         // Fire the dive once when a stop begins, and re-arm only after the car
         // has stopped shedding speed — otherwise it would retrigger every frame.
+        //
+        // The threshold is a fraction of this road's own brake rate, not a fixed
+        // deceleration. An absolute figure has to be kept in step by hand with
+        // `ROAD_TWO.brake`, and once that rate was raised to 60 a trigger of 1
+        // meant any frame losing 0.017 of a unit counted as a brake — which is
+        // noise in the following model, not braking.
         const decel = dt > 0 ? (car.v - next) / dt : 0;
-        if (!car.braking && decel >= ANIM.brake.trigger) {
+        const hard = rules.brake * ANIM.brake.trigger;
+        if (!car.braking && decel >= hard) {
           car.braking = true;
-          car.rig.playBrake();
-        } else if (car.braking && decel < ANIM.brake.trigger * 0.4) {
+          if (live) car.rig.playBrake();
+        } else if (car.braking && decel < hard * 0.4) {
           car.braking = false;
         }
 
@@ -367,10 +374,10 @@ export function createTraffic(
 
   let now = 0;
 
-  const step = (dt: number, isGreen: boolean, collisions: boolean) => {
+  const step = (dt: number, isGreen: boolean, live: boolean) => {
     now += dt;
 
-    for (const lane of lanes) drive(lane, dt, isGreen);
+    for (const lane of lanes) drive(lane, dt, isGreen, live);
 
     // Clear wrecks that have finished poofing, back to front so splicing is safe.
     for (const lane of lanes) {
@@ -388,12 +395,16 @@ export function createTraffic(
       for (const car of lane.cars) place(car, dt);
     }
 
-    if (collisions) collide();
+    if (live) collide();
   };
 
-  // Fill the road by running the real rules forward before the first frame, with
-  // collisions off so the opening state can never contain a wreck. Cheap: a few
-  // hundred iterations of arithmetic over a couple of dozen cars.
+  // Fill the road by running the real rules forward before the first frame.
+  //
+  // Nothing "live" happens during it: no collisions, so the opening state can
+  // never contain a wreck, and no animation clips, because the scene is not
+  // rendering yet. A clip fired here would simply sit queued and then play on the
+  // first visible frame — which is how every car that had braked in the warm-up
+  // ended up diving in unison the moment the page appeared.
   for (let i = 0; i < Math.round(WARM_UP_SECONDS * 60); i++) {
     step(1 / 60, LIGHT.startsGreen, false);
   }

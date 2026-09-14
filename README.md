@@ -105,6 +105,18 @@ Three authored clips, each played by its own AnimationGroup on its own node:
 | `brake` | pulling up | one-shot: the nose dives and rebounds past level |
 | `move` | pulling away | one-shot: the mirror of the dive — the nose lifts, then settles |
 
+The warm-up runs with clips **off**. It is not rendering, so a clip fired there
+would not play — it would sit queued and then start on the first visible frame,
+which is how every car that braked during the warm-up ended up diving in unison
+the moment the page appeared. Collisions are off for the same window, so the
+opening state can never contain a wreck.
+
+`brake.trigger` is a **fraction of that road's own `brake` rate**, not a
+deceleration. An absolute figure has to be kept in step by hand with
+`ROAD_TWO.brake`, and once that was retuned to 60 a trigger of 1 meant any frame
+losing 0.017 of a unit counted as braking — noise in the following model rather
+than a stop.
+
 `move` fires on the transition out of standstill, which is what "when the car
 starts moving" means and keeps the clip off every small mid-cruise adjustment. It
 is deliberately slower and softer than `brake`: stopping is an event, setting off
