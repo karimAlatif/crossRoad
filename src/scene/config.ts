@@ -185,7 +185,7 @@ export const ROAD_ONE = {
    * run the junction in, so it is the main dial for how hard the game is:
    * longer means more room to cross.
    */
-  breakTime: { min: 1.5, max: 2 },
+  breakTime: { min: 1, max: 2 },
   /**
    * Bumper gap between cars inside a wave, drawn once per wave like `speed`, so
    * one wave runs tight and the next runs loose.
@@ -198,7 +198,7 @@ export const ROAD_ONE = {
    * cars a row and a wave is plainly a group; at 40 it holds two, and a wave of
    * eight is spread over more road than exists.
    */
-  spawnGap: { min: 5, max: 14 },
+  spawnGap: { min: 2, max: 10 },
 };
 
 /**
