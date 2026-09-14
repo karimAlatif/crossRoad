@@ -35,7 +35,8 @@ type Rules = {
   /** True for roodOne: holds its speed, yields to nothing, queues for nothing. */
   free: boolean;
   speed: Range;
-  spawnGap: number;
+  /** A range even on roads without waves, where both ends are the same value. */
+  spawnGap: Range;
   /** Cars per wave. Free lanes only; null means every car joins on its own. */
   carsPerWave: Range | null;
   /** Seconds of empty road left between waves. Free lanes only. */
@@ -85,6 +86,8 @@ type Wave = {
   left: number;
   /** Cruise speed shared by every car in the current wave. */
   speed: number;
+  /** Bumper gap shared by every car in the current wave. */
+  spawnGap: number;
   /** The road's rows, so the break holds all of them at once. */
   lanes: Lane[];
 };
@@ -102,12 +105,14 @@ type Lane = {
   rules: Rules;
   wave: Wave;
   /**
-   * Extra clearance this row waits for before its next car, on top of
-   * `spawnGap` — the break between waves. Held per row rather than on the wave
-   * so both rows open their gap, which is what makes the road clear right
-   * across for a moment instead of one row at a time.
+   * The earliest this row may admit its next car.
+   *
+   * A time, not a distance, and that is the point: the distance check below can
+   * only measure against a car that is still on the road, so once a row emptied
+   * it admitted the next car instantly and the break between waves vanished
+   * outright. This carries the break across an empty road.
    */
-  breakGap: number;
+  gateFreeAt: number;
   /** True while the signal is holding this row short of the junction. */
   gated: boolean;
   /** How many cars this row runs. */
@@ -133,13 +138,13 @@ export function createTraffic(
   let crashes = 0;
 
   for (const road of roads) {
-    const wave: Wave = { left: 0, speed: 0, lanes: [] };
+    const wave: Wave = { left: 0, speed: 0, spawnGap: 0, lanes: [] };
     const rows = ([1, -1] as const).map((side) => createLane(road, side, wave));
     wave.lanes = rows;
     // Open the first wave properly. Left at zero, the very first car admitted
     // would take the counter negative and end its own wave, so every road began
     // with a wave of exactly one car.
-    startWave(wave, rows[0].rules, false);
+    startWave(wave, rows[0].rules);
     lanes.push(...rows);
   }
 
@@ -379,7 +384,7 @@ export function createTraffic(
     }
 
     for (const lane of lanes) {
-      admit(lane);
+      admit(lane, now);
       for (const car of lane.cars) place(car, dt);
     }
 
@@ -415,7 +420,8 @@ function rulesFor(road: RoadSpec): Rules {
     return {
       free: false,
       speed: ROAD_TWO.speed,
-      spawnGap: ROAD_TWO.spawnGap,
+      // No waves here, so the gap never varies: a range with one value in it.
+      spawnGap: { min: ROAD_TWO.spawnGap, max: ROAD_TWO.spawnGap },
       carsPerWave: null,
       breakTime: null,
       minGap: ROAD_TWO.minGap,
@@ -458,7 +464,11 @@ function rulesFor(road: RoadSpec): Rules {
  * back of it.
  */
 function entryPoint(lane: Lane, rig: CarRig): number {
-  return -(lane.rules.spawnGap + rig.length / 2);
+  // Deliberately the widest gap the config allows, not the current wave's. The
+  // entry is a fixed place on the road — the guarantee is that nothing is ever
+  // created further back than this — while the wave's own gap decides only how
+  // long a car waits before it appears there.
+  return -(lane.rules.spawnGap.max + rig.length / 2);
 }
 
 /**
@@ -468,26 +478,30 @@ function entryPoint(lane: Lane, rig: CarRig): number {
  * every row of the road, and the car already on the road, which has to be clear
  * of the entry by `spawnGap` before anything follows it through.
  */
-function admit(lane: Lane): void {
+function admit(lane: Lane, now: number): void {
   const car = lane.waiting[0];
   if (!car) return;
+
+  // Two gates, and both are needed.
+  //
+  // The clock carries the break between waves, and keeps working when the row is
+  // empty — which a gap measured off the last car cannot do, because once that
+  // car has gone there is nothing left to measure against.
+  if (now < lane.gateFreeAt) return;
 
   const rules = lane.rules;
   const wave = lane.wave;
   const s = entryPoint(lane, car.rig);
 
-  // The break is extra clearance *on top of* the normal spawn gap, not an
-  // alternative to it. Expressed as a plain hold it silently vanished whenever
-  // `spawnGap` was the larger of the two, which made every gap identical and the
-  // waves impossible to see.
-  const needed = rules.spawnGap + lane.breakGap;
+  // The ruler covers what the clock cannot: traffic that slowed or stopped after
+  // it entered. On roodTwo a queue backs up to the gate, and only a real distance
+  // check stops the next car being dropped on top of it.
   const tail = lane.cars[lane.cars.length - 1];
-  if (tail && tail.s - tail.rig.length / 2 - (s + car.rig.length / 2) < needed) {
+  if (tail && tail.s - tail.rig.length / 2 - (s + car.rig.length / 2) < wave.spawnGap) {
     return;
   }
 
   lane.waiting.shift();
-  lane.breakGap = 0;
   car.s = s;
   car.cruise = rules.carsPerWave ? wave.speed : between(rules.speed);
   car.v = car.cruise;
@@ -501,27 +515,39 @@ function admit(lane: Lane): void {
   car.rig.root.setEnabled(true);
   lane.cars.push(car);
 
+  // Hold the gate for exactly as long as this car needs to clear it: the time to
+  // travel its own length plus the wave's gap. That makes the in-wave headway
+  // `(spawnGap + length) / speed`, and the break adds to it in plain seconds.
+  lane.gateFreeAt = now + (wave.spawnGap + car.rig.length) / Math.max(car.cruise, 0.1);
+
   if (!rules.carsPerWave) return;
 
   // One counter for the whole road, so `carsPerWave` is a count across both rows
   // rather than per row.
   wave.left--;
-  if (wave.left <= 0) startWave(wave, rules, true);
+  if (wave.left <= 0) startWave(wave, rules, now);
 }
 
 /**
- * Begins the next wave: its size, the speed every car in it will share, and the
- * break that precedes it.
+ * Begins the next wave: its size, and the speed and spacing every car in it will
+ * share. `now` is omitted for the very first wave, which opens with no break.
  */
-function startWave(wave: Wave, rules: Rules, withBreak: boolean): void {
-  if (!rules.carsPerWave) return;
+function startWave(wave: Wave, rules: Rules, now?: number): void {
+  if (!rules.carsPerWave) {
+    wave.spawnGap = rules.spawnGap.min;
+    return;
+  }
+
   wave.left = Math.max(1, Math.round(between(rules.carsPerWave)));
   wave.speed = between(rules.speed);
-  if (!withBreak || !rules.breakTime) return;
+  wave.spawnGap = between(rules.spawnGap);
+  if (now === undefined || !rules.breakTime) return;
 
-  // Arm every row, so the gap opens right across the road.
-  const gap = between(rules.breakTime) * wave.speed;
-  for (const row of wave.lanes) row.breakGap = gap;
+  // Hold every row, so the gap opens right across the road at once. Measured from
+  // whenever each row's gate was next going to open, so the break is added to the
+  // normal spacing rather than overlapping it.
+  const pause = between(rules.breakTime);
+  for (const row of wave.lanes) row.gateFreeAt = Math.max(now, row.gateFreeAt) + pause;
 }
 
 /**
@@ -538,7 +564,8 @@ function startWave(wave: Wave, rules: Rules, withBreak: boolean): void {
  * erring high free and erring low a silent cap on the wave settings.
  */
 function poolSize(rules: Rules, length: number): number {
-  const density = Math.ceil(length / (rules.spawnGap + APPROX_CAR_LENGTH)) + 1;
+  // The tightest gap the config allows is what sets the most cars a row can hold.
+  const density = Math.ceil(length / (rules.spawnGap.min + APPROX_CAR_LENGTH)) + 1;
   const share = rules.carsPerWave ? Math.ceil(rules.carsPerWave.max / ROWS_PER_ROAD) + 1 : 0;
   return Math.max(3, density, share);
 }
@@ -571,7 +598,7 @@ function createLane(road: RoadSpec, side: 1 | -1, wave: Wave): Lane {
     stopS,
     rules,
     wave,
-    breakGap: 0,
+    gateFreeAt: 0,
     gated: stopS !== null && !LIGHT.startsGreen,
     poolSize: poolSize(rules, length),
     cars: [],

@@ -45,13 +45,25 @@ in each. `spawnGap` is the bumper gap inside a wave, and `breakTime` is the
 seconds of empty road added before the next one, which is the window the player
 crosses in.
 
-Cars join at a **fixed gate**: `spawnGap` behind the road's start marker, never
-further back. The break is extra clearance the gate waits for *on top of*
-`spawnGap`, armed on every row at once so the gap opens right across the road.
-Both details matter and both were once wrong — laying waves out backwards from
-the last car pushed the tail of a busy road a hundred metres off the back of it,
-and expressing the break as a plain time hold made it vanish entirely whenever
-`spawnGap` happened to be the larger of the two.
+`speed` and `spawnGap` are both drawn **once per wave**, so one wave runs fast
+and tight, the next slow and loose.
+
+Cars join at a **fixed gate**: `spawnGap.max` behind the road's start marker,
+never further back, whichever gap a wave happens to draw.
+
+The gate has two locks and needs both. A **clock** carries the break between
+waves and keeps working when a row is empty. A **ruler** measures the real
+distance to the last car, which is what stops a car being dropped on top of a
+queue that stopped after it entered — the roodTwo case. Each has a failure the
+other covers, and each has been the bug at some point: a break expressed only as
+distance vanished the moment a row emptied, because there was no longer a car to
+measure against; expressed only as time it was swallowed whenever `spawnGap` was
+the larger of the two.
+
+Measured headways at a fixed point on the road, with `breakTime: 1.5–2.5`:
+`[0.6 0.6 0.6 3.25 0.77 0.77 2.67 0.75]`. The in-wave figures shift between waves
+as `spawnGap` is redrawn, and each break is the in-wave headway plus a pause
+inside the configured range.
 
 `speed` is drawn **once per wave**, not per car. That is not cosmetic: with no
 following model, two cars in one wave at different speeds would simply close on

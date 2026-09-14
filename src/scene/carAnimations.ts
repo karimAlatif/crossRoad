@@ -64,21 +64,21 @@ function idleClip(): Animation[] {
   const { swing } = ANIM.idle;
 
   return [
-    clip("idle.shakeROTZ", "rotation.z", Animation.ANIMATIONLOOPMODE_CYCLE, [
+    clip("idle.rotZ", "rotation.z", Animation.ANIMATIONLOOPMODE_CYCLE, [
       { frame: 0, value: 0 },
       { frame: F * 0.25, value: swing },
       { frame: F * 0.5, value: 0 },
       { frame: F * 0.75, value: -swing },
       { frame: F, value: 0 },
     ]),
-    clip("idle.shakeROTY", "rotation.y", Animation.ANIMATIONLOOPMODE_CYCLE, [
+    clip("idle.rotY", "rotation.y", Animation.ANIMATIONLOOPMODE_CYCLE, [
       { frame: 0, value: 0 },
       { frame: F * 0.25, value: swing / 1.5 },
       { frame: F * 0.5, value: 0 },
       { frame: F * 0.75, value: -swing / 1.5 },
       { frame: F, value: 0 },
     ]),
-    clip("idle.shakeSCALINGY", "scaling.y", Animation.ANIMATIONLOOPMODE_CYCLE, [
+    clip("idle.scalingY", "scaling.y", Animation.ANIMATIONLOOPMODE_CYCLE, [
       { frame: 0, value: 1 },
       { frame: F * 0.25, value: 1 + swing * 2 },
       { frame: F * 0.5, value: 1 },
@@ -99,12 +99,18 @@ function brakeClip(): Animation[] {
   const { dip } = ANIM.brake;
 
   return [
-    clip("brake.dip", "rotation.x", Animation.ANIMATIONLOOPMODE_CONSTANT, [
+    clip("brake.rotX", "rotation.x", Animation.ANIMATIONLOOPMODE_CONSTANT, [
       { frame: 0, value: 0 },
       { frame: F * 0.22, value: dip },
       { frame: F * 0.55, value: -dip * 0.35 },
       { frame: F * 0.78, value: dip * 0.15 },
       { frame: F, value: 0 },
+    ]),
+    clip("brake.scalingY", "scaling.z", Animation.ANIMATIONLOOPMODE_CONSTANT, [
+      { frame: 0, value: 1 },
+      { frame: F * 0.22, value: .85 },
+      { frame: F * 0.55, value: 1.05 },
+      { frame: F, value: 1 },
     ]),
   ];
 }
@@ -128,6 +134,11 @@ function moveClip(): Animation[] {
       { frame: F * 0.62, value: lift * 0.22 },
       { frame: F * 0.84, value: -lift * 0.07 },
       { frame: F, value: 0 },
+    ]),
+    clip("move.scalingZ", "scaling.z", Animation.ANIMATIONLOOPMODE_CONSTANT, [
+      { frame: 0, value: 1 },
+      { frame: F * 0.3, value: 1.15 },
+      { frame: F, value: 1 },
     ]),
   ];
 }

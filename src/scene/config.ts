@@ -185,19 +185,20 @@ export const ROAD_ONE = {
    * run the junction in, so it is the main dial for how hard the game is:
    * longer means more room to cross.
    */
-  breakTime: { min: 10000, max: 10000 },
+  breakTime: { min: 100, max: 150 },
   /**
-   * Bumper gap between cars inside a wave, and the offset behind the road's start
-   * marker where every car enters. Nothing is ever created further back than this.
+   * Bumper gap between cars inside a wave, drawn once per wave like `speed`, so
+   * one wave runs tight and the next runs loose.
    *
-   * It is what decides whether a wave reads as a clump. A car takes up about
-   * `spawnGap + 5` metres and roodOne is 77 m long, so at 8 the road holds about
-   * six cars a row and a wave is plainly a group; at 40 it holds two, and a wave
-   * of eight is spread over more road than exists. The break between waves stays
-   * correct either way — it is added on top of this gap — but it stops looking
-   * like a break in a *clump* once the clump is longer than the road.
+   * The entry point itself is fixed at `max` behind the road's start marker —
+   * nothing is ever created further back than that, whichever gap a wave draws.
+   *
+   * A car takes up about `spawnGap + 5` metres and roodOne is 77 m long, so this
+   * also decides whether a wave reads as a clump: around 8 the road holds six
+   * cars a row and a wave is plainly a group; at 40 it holds two, and a wave of
+   * eight is spread over more road than exists.
    */
-  spawnGap: 5,
+  spawnGap: { min: 5, max: 14 },
 };
 
 /**
