@@ -11,6 +11,7 @@ import {
   type Scene,
 } from "@babylonjs/core";
 import { HEADLIGHT } from "./config";
+import { createFlicker } from "./flicker";
 
 /**
  * Where one car's lamps go, in its own rig space. Read from marker nodes in the
@@ -40,20 +41,6 @@ type Source = { mesh: Mesh | null };
 
 /** One car's beams, and the animated nodes whose pose they answer to. */
 type BeamRig = { node: TransformNode; anim: TransformNode[] };
-
-/**
- * One car's dodgy headlamp, mid-stutter.
- *
- * `lights` holds the lamp *and* the beam that belongs to it, so the two always
- * go dark together. `until` is the clock reading at which the current phase ends
- * and the other one begins.
- */
-type Fault = {
-  lights: AbstractMesh[];
-  until: number;
-  stuttering: boolean;
-  lit: boolean;
-};
 
 /**
  * Car lights, done without a single real light.
@@ -111,8 +98,7 @@ export function createHeadlights(scene: Scene): Headlights | null {
   const backSource: Source = { mesh: null };
   const parts: AbstractMesh[] = [];
   const rigs: BeamRig[] = [];
-  const faults: Fault[] = [];
-  let clock = 0;
+  const faults = createFlicker(scene, flicker);
 
   const place = (
     source: Source,
@@ -220,20 +206,14 @@ export function createHeadlights(scene: Scene): Headlights | null {
       );
     }
 
-    // Is this one of the cars with a bad connection?
+    // Is this one of the cars with a bad connection? Each headlamp is registered
+    // with the cone it throws, so the two always go out together.
     if (headlamps.length > 0 && Math.random() < flicker.cars) {
-      const both = Math.random() < flicker.both;
-      const chosen = both
-        ? headlamps
-        : [headlamps[Math.floor(Math.random() * headlamps.length)]];
-      faults.push({
-        lights: chosen.flat(),
-        // Scattered over a whole steady period, so the fleet does not fault in
-        // unison on the first frame.
-        until: Math.random() * flicker.steady.max,
-        stuttering: false,
-        lit: true,
-      });
+      if (Math.random() < flicker.both) {
+        for (const pair of headlamps) faults.add(pair);
+      } else {
+        faults.add(headlamps[Math.floor(Math.random() * headlamps.length)]);
+      }
     }
   };
 
@@ -252,27 +232,6 @@ export function createHeadlights(scene: Scene): Headlights | null {
    * the ones currently parked off-road are disabled, and skipped.
    */
   const sync = () => {
-    // A frame's worth of time, on the same terms the simulation uses: a long
-    // frame must not fast-forward a stutter, and a zero-length one is not a frame.
-    const dt = Math.min(scene.getEngine().getDeltaTime() / 1000, MAX_STEP);
-    if (dt > 0) {
-      clock += dt;
-      for (const fault of faults) {
-        if (clock >= fault.until) {
-          fault.stuttering = !fault.stuttering;
-          fault.until = clock + between(fault.stuttering ? flicker.stutter : flicker.steady);
-        }
-        // A square wave off the shared clock while it is playing up, steady
-        // otherwise. No per-lamp phase to carry, and no randomness per frame —
-        // the same lamp keeps the same rhythm for the length of one bout.
-        const lit = !fault.stuttering || Math.floor(clock * flicker.rate) % 2 === 0;
-        if (lit !== fault.lit) {
-          fault.lit = lit;
-          for (const light of fault.lights) light.setEnabled(lit);
-        }
-      }
-    }
-
     for (const rig of rigs) {
       if (!rig.node.isEnabled()) continue;
 
@@ -298,7 +257,7 @@ export function createHeadlights(scene: Scene): Headlights | null {
       for (const rig of rigs) rig.node.dispose();
       rigs.length = 0;
       for (const part of parts) part.dispose();
-      faults.length = 0;
+      faults.dispose();
       beamMaterial.dispose();
       frontMaterial.dispose();
       backMaterial.dispose();
@@ -312,13 +271,7 @@ export function createHeadlights(scene: Scene): Headlights | null {
 /** Just enough to keep a flat plane off the tarmac without it looking to float. */
 const ROAD_CLEARANCE = 0.2;
 
-/** A long frame (an alt-tab, a GC pause) must not fast-forward a stutter. */
-const MAX_STEP = 1 / 20;
 
-/** A number somewhere in an inclusive range. */
-function between(range: { min: number; max: number }): number {
-  return range.min + Math.random() * (range.max - range.min);
-}
 
 /**
  * The cone a headlamp throws on the road: it leaves the bumper as a narrow spot

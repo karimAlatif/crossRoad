@@ -30,11 +30,44 @@ const BRAKE_FRAMES = 45;
 /** Longer than the dive on purpose: pulling away should read as smoother. */
 const MOVE_FRAMES = 55;
 
+/**
+ * Where in each one-shot the pose reaches its extreme, as a fraction of the clip.
+ *
+ * Named rather than written into the keyframes twice over, because the particle
+ * effects key off exactly these moments: the tyre smoke belongs at the bottom of
+ * the dive, not at the start of it. Retune a peak here and the smoke follows.
+ */
+const BRAKE_PEAK = 0.22;
+const MOVE_PEAK = 0.3;
+
 export function createCarClips(): CarClips {
   return { idle: idleClip(), brake: brakeClip(), move: moveClip() };
 }
 
 export const IDLE_LENGTH = IDLE_FRAMES;
+
+/**
+ * When things happen in each clip, in seconds of real time.
+ *
+ * The clips are authored at 60 frames a second and played back at `ANIM.*.speed`
+ * as a rate, so a peak that sits at frame 10 of a clip playing at half speed
+ * arrives after a third of a second. Anything that has to land *with* the
+ * animation — the particle effects do — has to work that out rather than guess,
+ * and has to work it out again whenever a speed is retuned.
+ */
+export function clipTiming() {
+  return {
+    /** Seconds from the start of the dive to the bottom of it. */
+    brakePeak: (BRAKE_FRAMES * BRAKE_PEAK) / 60 / ANIM.brake.speed,
+    /** Seconds from the start of the pull-away to the top of the lift. */
+    movePeak: (MOVE_FRAMES * MOVE_PEAK) / 60 / ANIM.move.speed,
+    /**
+     * Seconds between one extreme of the idle shake and the next. The car is at
+     * full lock left, then full lock right, twice per cycle.
+     */
+    idleBeat: 0.5 / ANIM.idle.speed,
+  };
+}
 
 function clip(
   name: string,
@@ -101,14 +134,14 @@ function brakeClip(): Animation[] {
   return [
     clip("brake.rotX", "rotation.x", Animation.ANIMATIONLOOPMODE_CONSTANT, [
       { frame: 0, value: 0 },
-      { frame: F * 0.22, value: dip },
+      { frame: F * BRAKE_PEAK, value: dip },
       { frame: F * 0.55, value: -dip * 0.35 },
       { frame: F * 0.78, value: dip * 0.15 },
       { frame: F, value: 0 },
     ]),
     clip("brake.scalingY", "scaling.z", Animation.ANIMATIONLOOPMODE_CONSTANT, [
       { frame: 0, value: 1 },
-      { frame: F * 0.22, value: .85 },
+      { frame: F * BRAKE_PEAK, value: .85 },
       { frame: F * 0.55, value: 1.05 },
       { frame: F, value: 1 },
     ]),
@@ -130,14 +163,14 @@ function moveClip(): Animation[] {
   return [
     clip("move.lift", "rotation.x", Animation.ANIMATIONLOOPMODE_CONSTANT, [
       { frame: 0, value: 0 },
-      { frame: F * 0.3, value: -lift },
+      { frame: F * MOVE_PEAK, value: -lift },
       { frame: F * 0.62, value: lift * 0.22 },
       { frame: F * 0.84, value: -lift * 0.07 },
       { frame: F, value: 0 },
     ]),
     clip("move.scalingZ", "scaling.z", Animation.ANIMATIONLOOPMODE_CONSTANT, [
       { frame: 0, value: 1 },
-      { frame: F * 0.3, value: 1.15 },
+      { frame: F * MOVE_PEAK, value: 1.15 },
       { frame: F, value: 1 },
     ]),
   ];

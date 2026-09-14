@@ -212,7 +212,7 @@ export const ROAD_ONE = {
    * cars a row and a wave is plainly a group; at 40 it holds two, and a wave of
    * eight is spread over more road than exists.
    */
-  spawnGap: { min: 2, max: 10 },
+  spawnGap: { min: 2, max: 12 },
 };
 
 /**
@@ -346,6 +346,56 @@ export const ANIM = {
     /** How far the nose rises, in radians. The mirror of `brake.dip`. */
     lift: 0.45,
   },
+};
+
+/* -------------------------------------------------------- car particle FX -- */
+
+/**
+ * A particle effect for each of the three clips a car can play.
+ *
+ * There is one ParticleSystem behind each of these, shared by every car on the
+ * road — they are all bursts, and a burst reads its position at the instant it
+ * fires, so one system can throw smoke under a different car every frame. The
+ * whole lot costs three draw calls whether ten cars are running or a hundred.
+ * `capacity` is the ceiling on particles alive at once across the *fleet*, so it
+ * is the one number here that decides how much this can ever cost.
+ *
+ * The timing is not set here. Each one-shot fires twice — once as the clip
+ * starts and once at the moment the pose peaks — and those moments are worked
+ * out from the keyframes and playback speed in ANIM, so retuning a clip carries
+ * the smoke with it.
+ */
+export const CAR_FX = {
+  enabled: true,
+
+  /**
+   * `idle` — the tailpipe of a car ticking over at the lights, coughing once at
+   * each extreme of the shake. The shake sets the rhythm, so a more agitated car
+   * smokes faster.
+   *
+   *   puff   particles per cough. Keep it low: every stopped car is doing this
+   *   spread how loosely the puff scatters, in units per second
+   */
+  idle: { capacity: 220, puff: 3, spread: 0.45 },
+
+  /**
+   * `move` — dust off the driven wheels as the car gets away, thrown backwards
+   * and settling rather than climbing.
+   *
+   *   kick   particles as the wheels bite, per rear wheel
+   *   trail  particles at the top of the nose lift, per rear wheel
+   */
+  move: { capacity: 260, kick: 9, trail: 5, spread: 1.1 },
+
+  /**
+   * `brake` — tyre smoke as the car stops hard, shoved forward past the bumper
+   * because the car is still travelling when the tyres stop turning.
+   *
+   *   bite   particles as the brakes go on, per front wheel
+   *   squeal particles at the bottom of the dive, per front wheel — the bigger
+   *          of the two, because that is when the weight lands on the front
+   */
+  brake: { capacity: 300, bite: 5, squeal: 13, spread: 1 },
 };
 
 /* --------------------------------------------------------------- headlights -- */
@@ -495,4 +545,23 @@ export const STREET_LAMP = {
    *   height  how far off the ground it lies — enough to clear a kerb
    */
   pool: { size: 9, height: 0.12, brightness: 0.62 },
+
+  /**
+   * Lamps on their way out. Same idea as the cars' headlamps, but slower and
+   * rarer: a street lamp that stuttered as often as a loose car connection
+   * would pull the eye away from the junction.
+   *
+   * A lamp's bulb and the pool under it always go dark together.
+   *
+   *   lamps   how many of the posts are faulty, 0 to 1. 0 turns it off
+   *   steady  seconds of normal light between bouts (a range)
+   *   stutter how long one bout lasts, in seconds (a range)
+   *   rate    on-off flickers per second during a bout
+   */
+  flicker: {
+    lamps: 0.3,
+    steady: { min: 3, max: 11 },
+    stutter: { min: 0.2, max: 0.9 },
+    rate: 9,
+  },
 };

@@ -11,7 +11,8 @@ import {
   type Scene,
 } from "@babylonjs/core";
 import { ANIM, HEADLIGHT, TRAFFIC } from "./config";
-import { createCarClips, IDLE_LENGTH } from "./carAnimations";
+import { clipTiming, createCarClips, IDLE_LENGTH } from "./carAnimations";
+import { createCarEffects } from "./carEffects";
 import { createHeadlights, type LampMounts } from "./carHeadlights";
 
 /**
@@ -44,8 +45,11 @@ export type CarRig = {
   /**
    * How far the car has settled into its idle shudder: 0 while it is moving (and
    * the clip is paused outright), 1 once it has stopped.
+   *
+   * `dt` is the length of the frame, which the exhaust puffs need: they go off
+   * on the beat of the shake, so something has to keep time.
    */
-  setIdle: (weight: number) => void;
+  setIdle: (weight: number, dt: number) => void;
   /** Fires the one-shot brake dive. */
   playBrake: () => void;
   /** Fires the one-shot pull-away lift. */
@@ -80,6 +84,19 @@ const HIDDEN_PART = /(_SteeringW|_Plates|Steering_Wheel)/i;
 /** Below this a layer is treated as off, and stops being animated at all. */
 const OFF = 0.002;
 
+/**
+ * How far into the idle blend a car has to be before its exhaust starts up.
+ *
+ * High on purpose. `setIdle` is fed a weight that ramps over `ANIM.blend`, so a
+ * car that merely dipped below the walking pace the simulation calls stopped
+ * would trail smoke as it rolled through the junction. Only a car that has
+ * properly settled smokes.
+ */
+const IDLE_SMOKING = 0.75;
+
+/** The rig's own nose, before any of the city's transforms are applied. */
+const FORWARD = new Vector3(0, 0, 1);
+
 export type CarFactory = {
   templateCount: number;
   spawn: (index: number) => CarRig;
@@ -111,6 +128,9 @@ export function createCarFactory(
   const clips = createCarClips();
   // Likewise the lights: one set of source meshes the whole fleet instances from.
   const headlights = createHeadlights(scene);
+  // And the smoke: one ParticleSystem per effect for the whole road.
+  const effects = createCarEffects(scene);
+  const timing = clipTiming();
   let serial = 0;
 
   const spawn = (index: number): CarRig => {
@@ -210,16 +230,67 @@ export function createCarFactory(
       if (map?.renderList) map.renderList.push(...casters);
     }
 
+    // Where the smoke comes from, in the rig's own space: the tailpipe behind the
+    // back bumper, and the contact patch of each wheel. Measured off this car
+    // rather than assumed, so a van smokes from a van's height.
+    const radius = wheelRadius || 0.36;
+    const axle = width * 0.38;
+    const tailpipe = new Vector3(width * 0.24, radius * 0.5, -length / 2 - 0.12);
+    const rear = [
+      new Vector3(-axle, radius * 0.45, -length * 0.3),
+      new Vector3(axle, radius * 0.45, -length * 0.3),
+    ];
+    const nose = [
+      new Vector3(-axle, radius * 0.45, length * 0.3),
+      new Vector3(axle, radius * 0.45, length * 0.3),
+    ];
+
+    // Scratch, reused every burst: none of this allocates once the road is built.
+    const where = new Vector3();
+    const heading = new Vector3();
+
+    /** Turns a rig-local point into a world one, and reads off the car's facing. */
+    const aimAt = (local: Vector3): Vector3 => {
+      const matrix = root.computeWorldMatrix(true);
+      Vector3.TransformNormalToRef(FORWARD, matrix, heading);
+      heading.normalize();
+      Vector3.TransformCoordinatesToRef(local, matrix, where);
+      return where;
+    };
+
+    /** Seconds until the next cough, counted down by `setIdle`. */
+    let nextPuff = Math.random() * timing.idleBeat;
+
     return {
       root,
       crash,
       wheels,
       length,
       width,
-      wheelRadius: wheelRadius || 0.36,
-      setIdle: (weight) => blend(idleLayer, weight),
-      playBrake: () => fire(brakeLayer, moveLayer),
-      playMove: () => fire(moveLayer, brakeLayer),
+      wheelRadius: radius,
+      setIdle: (weight, dt) => {
+        blend(idleLayer, weight);
+        if (!effects || weight <= IDLE_SMOKING) {
+          // A car that is not properly stopped is not idling, and one that has
+          // only just begun to settle should not already be smoking.
+          nextPuff = Math.random() * timing.idleBeat;
+          return;
+        }
+        nextPuff -= dt;
+        if (nextPuff > 0) return;
+        // On the beat of the shake, not on a clock of its own: the car coughs at
+        // each extreme of the wobble, which is what makes the two look connected.
+        nextPuff += timing.idleBeat;
+        effects.exhaust(aimAt(tailpipe), heading);
+      },
+      playBrake: () => {
+        fire(brakeLayer, moveLayer);
+        for (const wheel of nose) effects?.skid(aimAt(wheel), heading);
+      },
+      playMove: () => {
+        fire(moveLayer, brakeLayer);
+        for (const wheel of rear) effects?.launch(aimAt(wheel), heading);
+      },
       dispose: () => {
         idleLayer.group.dispose();
         brakeLayer.group.dispose();
@@ -235,7 +306,14 @@ export function createCarFactory(
     };
   };
 
-  return { templateCount: templates.length, spawn, dispose: () => headlights?.dispose() };
+  return {
+    templateCount: templates.length,
+    spawn,
+    dispose: () => {
+      headlights?.dispose();
+      effects?.dispose();
+    },
+  };
 }
 
 /**

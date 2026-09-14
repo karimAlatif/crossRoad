@@ -257,7 +257,7 @@ export function createTraffic(
     car.settle = 0;
     car.braking = false;
     car.crash = null;
-    car.rig.setIdle(0);
+    car.rig.setIdle(0, 0);
     car.rig.root.setEnabled(false);
     lane.waiting.push(car);
   };
@@ -292,11 +292,11 @@ export function createTraffic(
       node.scaling.set(sx, sy, sz);
 
       // A wreck does not shudder, so the clip stops costing anything.
-      rig.setIdle(0);
+      rig.setIdle(0, dt);
     } else {
       const settled = car.v <= STOPPED ? 1 : 0;
       car.settle = moveTowards(car.settle, settled, dt / ANIM.blend);
-      rig.setIdle(car.settle);
+      rig.setIdle(car.settle, dt);
     }
 
     for (const wheel of rig.wheels) {
