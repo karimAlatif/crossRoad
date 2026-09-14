@@ -35,7 +35,13 @@ export function createEnvironment(scene: Scene): Environment {
   const skyMaterial = new SkyMaterial("skyMaterial", scene);
   skyMaterial.backFaceCulling = false;
   skyMaterial.useSunPosition = true;
-  skyMaterial.sunPosition = sunDirection.scale(100);
+  // The sky's sun sits just *below* the horizon while the key light still comes
+  // from above. That split is what makes a night: SkyMaterial renders the deep
+  // blue of late dusk rather than flat black, and keeps a faint glow low down for
+  // the skyline to sit against, while the moon above still shapes the buildings.
+  skyMaterial.sunPosition = new Vector3(sunDirection.x, SKY.sunElevation, sunDirection.z)
+    .normalize()
+    .scale(100);
   skyMaterial.turbidity = SKY.turbidity;
   skyMaterial.luminance = SKY.luminance;
   skyMaterial.rayleigh = SKY.rayleigh;
@@ -67,7 +73,7 @@ export function createEnvironment(scene: Scene): Environment {
   bake();
 
   // Haze tuned to the sky's horizon so the far city dissolves instead of ending.
-  scene.fogMode = Scene.FOGMODE_EXP2;
+  scene.fogMode = FOG.enabled ? Scene.FOGMODE_EXP2 : Scene.FOGMODE_NONE;
   scene.fogColor = FOG.color;
   scene.fogDensity = FOG.density;
   scene.ambientColor = new Color3(0.18, 0.2, 0.24);

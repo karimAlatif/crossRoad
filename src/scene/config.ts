@@ -50,15 +50,15 @@ export const CAMERA = {
 /** Mid-morning sun: long shadows across the asphalt, warm key, cool sky fill. */
 export const SUN = {
   /** Direction the sun *points*, i.e. light travel direction (normalised in code). */
-  direction: new Vector3(-0.48, -0.7, 0.33),
-  color: new Color3(1.0, 0.95, 0.84),
-  intensity: 5.6,
+  direction: new Vector3(-0.42, -0.62, 0.36),
+  color: new Color3(0.62, 0.74, 1.0),
+  intensity: 0.58,
   shadow: {
     mapSize: 1536,
     cascades: 2,
     lambda: 0.86,
     maxZ: 110,
-    darkness: 0.22,
+    darkness: 0.34,
     bias: 0.012,
     normalBias: 0.018,
     /** Only meshes within this radius of the crossroad cast shadows. */
@@ -76,50 +76,64 @@ export const SUN = {
 
 /** Sky-dome bounce light. Keeps shadowed façades blue instead of black. */
 export const FILL = {
-  skyColor: new Color3(0.62, 0.78, 1.0),
-  groundColor: new Color3(0.42, 0.36, 0.3),
-  intensity: 0.6,
+  skyColor: new Color3(0.2, 0.26, 0.42),
+  groundColor: new Color3(0.07, 0.07, 0.11),
+  intensity: 0.55,
 } as const;
 
 export const SKY = {
-  turbidity: 3.4,
-  luminance: 1.0,
-  rayleigh: 1.6,
+  turbidity: 8,
+  luminance: 0.22,
+  rayleigh: 0.35,
   mieCoefficient: 0.006,
   mieDirectionalG: 0.82,
+  /**
+   * Height of the sky's own sun. Negative puts it under the horizon, which is
+   * what turns the dome to night; nearer zero leaves more dusk glow low down.
+   */
+  sunElevation: -0.18,
   size: 900,
   /** Resolution of the cube baked off the sky dome and used as the IBL. */
   probeSize: 256,
   /** How much the baked sky contributes to ambient + reflections. */
-  environmentIntensity: 1.5,
+  environmentIntensity: 0.52,
 };
 
 /** Haze that dissolves the far city and keeps the eye on the junction. */
+/**
+ * Night haze. Turn `density` up and the far blocks dissolve into the dark, which
+ * both frames the junction and hides how little is lit out there; turn it down
+ * and the whole city stays visible.
+ *
+ * `color` is what the distance fades *to*, so it doubles as the colour of the
+ * night itself — keep it close to CLEAR_COLOR or the horizon shows a seam.
+ */
 export const FOG = {
-  color: new Color3(0.72, 0.83, 0.95),
-  density: 0.003,
+  enabled: true,
+  color: new Color3(0.05, 0.07, 0.14),
+  density: 0.011,
 };
 
 /** Matches the sky horizon, so any sliver the dome misses is invisible. */
-export const CLEAR_COLOR = new Color4(0.68, 0.81, 0.95, 1);
+export const CLEAR_COLOR = new Color4(0.028, 0.035, 0.07, 1);
 
 export const POST = {
-  bloom: { weight: 0.36, threshold: 0.82, kernel: 48, scale: 0.6 },
+  bloom: { weight: 0.45, threshold: 0.75, kernel: 64, scale: 0.6 },
   /** Tilt-shift: shallow depth of field is what makes a city read as a toy. */
   dof: { fStop: 1.4, focalLength: 62, blurLevel: 0 },
-  image: { exposure: 1.5, contrast: 1.25, saturation: 44, vignetteWeight: 1.8 },
+  image: { exposure: 1.15, contrast: 1.28, saturation: 40, vignetteWeight: 2.6 },
   sharpen: { edgeAmount: 0.22, colorAmount: 1.0 },
   grain: 4,
   chromaticAberration: 3.5,
   ssao: { strength: 1.15, radius: 1.6, samples: 16, maxZ: 260 },
-  glow: 0.55,
+  glow: 0.9,
 } as const;
 
 /** Synty's Unity export writes emissiveFactor = 0, which kills the window glow
  *  baked into `Emissive_01.jpg`. We put it back — this is the night-window /
  *  neon-sign sparkle that bloom then picks up. */
-export const EMISSIVE_REVIVE = new Color3(1, 0.96, 0.88);
-export const EMISSIVE_STRENGTH = 0.35;
+export const EMISSIVE_REVIVE = new Color3(1, 0.87, 0.62);
+export const EMISSIVE_STRENGTH = 1.25;
 
 /* -------------------------------------------------------------------- props -- */
 
@@ -332,4 +346,87 @@ export const ANIM = {
     /** How far the nose rises, in radians. The mirror of `brake.dip`. */
     lift: 0.45,
   },
+};
+
+/* --------------------------------------------------------------- headlights -- */
+
+/**
+ * Car lights.
+ *
+ * None of these is a real light. A Babylon light is priced per *material*, not
+ * per light, so thirty headlights would recompile every shader in the city for
+ * thirty lights and pay for all of them on every pixel. These are additive
+ * planes instead, and every car after the first instances the same few meshes —
+ * so the whole fleet costs a handful of draw calls however many cars there are.
+ *
+ * Colour is baked into each light's texture rather than set on its material,
+ * because StandardMaterial *adds* an emissive texture to `emissiveColor` and
+ * clamps the sum: a white texture pins the result to white whatever colour it is
+ * given. That is also why `brightness` stops being useful above 1 — past there
+ * the shader clamps and the hue washes out.
+ */
+export const HEADLIGHT = {
+  enabled: true,
+
+  /** Warm gold at the front, deep red at the back. */
+  frontColour: new Color3(1, 0.68, 0.3),
+  tailColour: new Color3(1, 0.12, 0.04),
+
+  /**
+   * The cone of light each headlamp throws down the road. There are two, one per
+   * lamp, so this is the size of *one* of them.
+   *
+   * It begins at the bumper — not a little way in front of it — as a narrow spot
+   * the width of the lamp, and fans out from there.
+   *
+   *   length     how far down the road it reaches, in metres
+   *   startWidth how wide it is where it leaves the car, in metres
+   *   endWidth   how wide it has opened out to at the far end, in metres
+   *   fade       where along its length it has died away, 0 to 1: lower ends it
+   *              sooner, which is what keeps the far end soft instead of cut off
+   *   brightness 0 to 1
+   */
+  beam: { length: 6, startWidth: 0.45, endWidth: 5.5, fade: 0.9, brightness: 0.8 },
+
+  /**
+   * The lamps on the car itself — a pair at each end, never one in the middle.
+   *
+   *   size   diameter of the glow, in metres
+   *   height how far off the road it sits: this is lamp height, not road height,
+   *          which is what keeps the glow on the car instead of pooling under it
+   *   apart  how far the pair sits either side of the centreline, as a fraction
+   *          of the car's own width
+   */
+  lamp: { size: 4.05, height: 1.55, apart: 0.64, brightness: 1 },
+  tail: { size: 0.9, height: 0.6, brightness: 1 },
+};
+
+/* ------------------------------------------------------------- street lamps -- */
+
+/**
+ * The city's own lamp posts, lit the same way the cars are: additive planes
+ * instanced off one source each, no real lights.
+ *
+ * Their positions are not guessed. Every `SM_Prop_LightPole_Base` in the .glb
+ * carries a child node named `spot`, sitting at the end of the arm where the
+ * lamp actually hangs — so the light goes exactly where the model says it should.
+ */
+export const STREET_LAMP = {
+  enabled: true,
+
+  /** The node inside each lamp post that marks where its light belongs. */
+  marker: "spot",
+
+  /** Warm sodium. */
+  colour: new Color3(1, 0.62, 0.22),
+
+  /** The glow at the lamp head itself. `size` is its diameter in metres. */
+  bulb: { size: 2.4, brightness: 1 },
+
+  /**
+   * The pool it casts on the ground below.
+   *
+   *   height  how far off the ground it lies — enough to clear a kerb
+   */
+  pool: { size: 9, height: 0.12, brightness: 0.62 },
 };

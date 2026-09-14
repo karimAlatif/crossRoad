@@ -420,6 +420,7 @@ export function createTraffic(
       onCrash.clear();
       effects.dispose();
       for (const car of cars) car.rig.dispose();
+      factory.dispose();
     },
   };
 }

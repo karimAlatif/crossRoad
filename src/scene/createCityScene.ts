@@ -14,6 +14,7 @@ import { createLighting, registerShadowCasters } from "./lighting";
 import { QUALITY } from "./config";
 import { createPostProcess } from "./postProcess";
 import { readProps } from "./props";
+import { createStreetLamps } from "./streetLamps";
 import { createTraffic, type CrashEvent } from "./traffic";
 import { createTrafficLight } from "./trafficLight";
 
@@ -69,6 +70,9 @@ export async function createCityScene(
 
   // The authored markers drive everything below: where the signal stands, and
   // where each road starts, ends and meets the junction.
+  onProgress(1, "Lighting the street");
+  const lamps = createStreetLamps(scene);
+
   onProgress(1, "Reading the junction");
   const props = readProps(scene);
 
@@ -130,6 +134,7 @@ export async function createCityScene(
       engine.stopRenderLoop(render);
       scene.onBeforeRenderObservable.remove(tick);
       scene.onPointerObservable.remove(pointer);
+      lamps?.dispose();
       traffic.dispose();
       light.dispose();
       postFx.dispose();

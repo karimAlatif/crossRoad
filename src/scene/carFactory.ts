@@ -11,6 +11,7 @@ import {
 } from "@babylonjs/core";
 import { ANIM, TRAFFIC } from "./config";
 import { createCarClips, IDLE_LENGTH } from "./carAnimations";
+import { createHeadlights } from "./carHeadlights";
 
 /**
  * One drivable car.
@@ -81,6 +82,7 @@ const OFF = 0.002;
 export type CarFactory = {
   templateCount: number;
   spawn: (index: number) => CarRig;
+  dispose: () => void;
 };
 
 /**
@@ -106,6 +108,8 @@ export function createCarFactory(
 
   // Built once and shared by every car's AnimationGroups.
   const clips = createCarClips();
+  // Likewise the lights: one set of source meshes the whole fleet instances from.
+  const headlights = createHeadlights(scene);
   let serial = 0;
 
   const spawn = (index: number): CarRig => {
@@ -183,6 +187,7 @@ export function createCarFactory(
     }
 
     root.parent = space;
+    headlights?.attach(root, length, width);
 
     const idleLayer = loopingLayer(scene, `car${id}.idle`, clips.idle, idle, ANIM.idle.speed);
     const brakeLayer = oneShotLayer(scene, `car${id}.brake`, clips.brake, brake, ANIM.brake.speed);
@@ -221,7 +226,7 @@ export function createCarFactory(
     };
   };
 
-  return { templateCount: templates.length, spawn };
+  return { templateCount: templates.length, spawn, dispose: () => headlights?.dispose() };
 }
 
 /**

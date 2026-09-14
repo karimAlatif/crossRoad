@@ -161,6 +161,97 @@ keyframe spacing. `brake.trigger` is the deceleration, in units per second
 squared, that sets the dive off; `move` needs no trigger, because "stopped, and
 now moving" is not a threshold to tune.
 
+## Night
+
+The scene runs at night, and the whole look is built so that adding light costs
+nothing.
+
+**No light is a Babylon light.** A Babylon light is priced per *material*, not per
+light: thirty car headlights would recompile every shader in the city for thirty
+lights and then pay for all of them on every pixel of every surface. The scene
+has exactly three real lights — a moon, a sky fill, and the signal's spill — and
+that number does not change however much of the city is lit.
+
+Everything else is **additive geometry, hardware-instanced**. Each car carries a
+pool of light on the road ahead, a bright spot at the bumper and a red one at the
+tail; each lamp post carries a bulb and a pool. Every car after the first
+instances the same three source meshes, every post the same two. Measured: 126
+headlight meshes off **3** sources, and adding the lot moved draw calls from 977
+to 991.
+
+The cone **starts at the bumper**, as a spot the width of the lamp, and fans out
+from there — `beam.startWidth` and `beam.endWidth` are those two widths in metres.
+It reaches full brightness within the first 3% of its length rather than
+instantly, which is only to avoid a straight edge across the head of it; what
+really stops a seam showing is starting narrow, since there is nothing wide
+enough at the car to show one.
+
+**The beam texture is written pixel by pixel**, not built from canvas gradient
+stops. A radial gradient can only ever produce an ellipse — symmetric,
+hard-edged, and reading as a blob dropped on the tarmac rather than light thrown
+forward. The falloff wanted here differs per axis: across the width, a squared
+parabola, which has no visible edge at all; along the length, a quick rise to a
+peak just ahead of the bumper and then a long decay that reaches zero *before*
+the plane ends, so the far end has nothing to cut off against. `HEADLIGHT.spread`
+is those four numbers.
+
+Each car throws **two cones, one per headlamp**, not one down the middle, and
+carries a **pair** of lamps at each end. Both are instances of the same source
+meshes, so the extra realism costs no draw calls at all.
+
+The lamps sit at lamp height and turn to face the camera, rather than lying flat
+on the road at the bumper — a flat glow down there spills out around the car and
+reads as light pooling *underneath* it.
+
+Street lamps are placed from the model, not measured: every `SM_Prop_LightPole_Base`
+in the .glb carries a child node named **`spot`** at the end of its arm, which is
+exactly where the lamp hangs. Measuring the post's bounding box instead put the
+light halfway along the arm, out over the road.
+
+**Colour lives in the texture, not on the material** — and this one is a trap
+worth knowing about. `StandardMaterial` *adds* its emissive texture to
+`emissiveColor` rather than multiplying by it, then clamps the sum:
+
+```glsl
+vec3 emissiveColor = vEmissiveColor;
+emissiveColor += TEXRD(emissiveSampler, ...).rgb;   // default.fragment
+finalDiffuse = clamp(... + emissiveColor ..., 0.0, 1.0);
+```
+
+So a *white* glow texture pins every channel at 1 and the light comes out pure
+white however warm a colour the material was handed. Saturating `emissiveColor`
+had no effect at all until the colour was baked into the texture's RGB and
+`emissiveColor` left black. `beamStrength` and friends now scale that baked
+colour, which is why they cap at 1: past that the shader clamps and the hue
+washes out again.
+
+The other half of reading warm is that the road has to be **dark**. Additive
+light lands on top of whatever is already there, so a brightly blue-lit road plus
+an orange beam sums to white — the beam was measured adding a correct
+`(80, 55, 7)` and still showing as `(222, 220, 216)` because of what it was
+landing on. The moon, fill and IBL intensities are set low for that reason as
+much as for the look.
+
+Additive matters twice over. It never darkens what is behind it, and because
+adding is commutative the instances need no per-mesh depth sort — which is what
+makes them instanceable at all.
+
+**The city lights itself.** The `.glb` carries an emissive atlas for its windows
+(see the note above about Unity zeroing it), so at night `EMISSIVE_STRENGTH`
+turns every window on at no per-mesh cost. Their glow comes from **bloom**, not
+the glow layer: bloom is a fixed cost whatever is emitting, while the glow layer
+would re-render every lit mesh in the city into its own buffer. The glow layer
+stays restricted to the signal.
+
+**The sky is night, the key light is not.** `SKY.sunElevation` puts the sky's own
+sun *below* the horizon, which is what makes SkyMaterial render deep dusk instead
+of flat black and leaves a faint glow for the skyline to sit against. The
+directional light still comes from above as a cool, dim moon. The IBL is baked
+off that night sky, so the ambient is the right colour by construction.
+
+Dials: `FOG` (with an `enabled` flag), `HEADLIGHT`, `STREET_LAMP`,
+`EMISSIVE_STRENGTH`, `SKY.sunElevation`, and `SUN`/`FILL` for the moon.
+
 ## Performance
 
 The frame was rebuilt around where the draw calls were actually being multiplied:
