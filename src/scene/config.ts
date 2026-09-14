@@ -370,7 +370,7 @@ export const HEADLIGHT = {
 
   /** Warm gold at the front, deep red at the back. */
   frontColour: new Color3(1, 0.68, 0.3),
-  tailColour: new Color3(1, 0.12, 0.04),
+  backColour: new Color3(1, 0.12, 0.04),
 
   /**
    * The cone of light each headlamp throws down the road. There are two, one per
@@ -385,20 +385,86 @@ export const HEADLIGHT = {
    *   fade       where along its length it has died away, 0 to 1: lower ends it
    *              sooner, which is what keeps the far end soft instead of cut off
    *   brightness 0 to 1
+   *   follow     how far the pool slides as the car pitches, in metres per
+   *              radian. The beams always swing with the car's yaw; they cannot
+   *              also tilt with its nose, because a flat cone tipped by a 0.45
+   *              rad dive ends up under the road. Sliding is what a real dipping
+   *              headlight does anyway: a dive throws the light short and pulls
+   *              the pool in towards the bumper. 0 pins it.
    */
-  beam: { length: 6, startWidth: 0.45, endWidth: 5.5, fade: 0.9, brightness: 0.8 },
+  beam: { length: 6, startWidth: 0.45, endWidth: 5.5, fade: 0.9, brightness: 0.8, follow: 3 },
 
   /**
-   * The lamps on the car itself — a pair at each end, never one in the middle.
+   * Where the lamps sit on each car.
    *
-   *   size   diameter of the glow, in metres
-   *   height how far off the road it sits: this is lamp height, not road height,
-   *          which is what keeps the glow on the car instead of pooling under it
-   *   apart  how far the pair sits either side of the centreline, as a fraction
-   *          of the car's own width
+   * Taken from marker nodes in the model. The cars are different shapes, so a
+   * position measured off the bumper is only ever right for some of them — a
+   * taxi's headlamps and a van's are not in the same place, and nothing in a
+   * bounding box knows that. A marked car carries a `forntLamp` and a `backLamp`
+   * node, each with a `left` and a `right` child, and a lamp goes at each of the
+   * four, exactly where the marker is. Nothing is added to those positions.
+   *
+   *   SM_Veh_Car_Taxi_03
+   *     forntLamp → left, right      a headlamp at each
+   *     backLamp  → left, right      a rear lamp at each
+   *
+   * `front` really is spelled "forntLamp": that is the name in scene.glb. Fix it
+   * in the model and this string has to follow, or the marked cars quietly drop
+   * back to the measured fallback below.
+   *
+   * 8 of the 20 models carry markers. The other 12 fall back to positions
+   * measured off their own bounding box — see `lampMounts` in carFactory.ts —
+   * so the two can coexist: export a car with markers and it starts using them
+   * with nothing else to change.
    */
-  lamp: { size: 4.05, height: 1.55, apart: 0.64, brightness: 1 },
-  tail: { size: 0.9, height: 0.6, brightness: 1 },
+  mounts: { front: "forntLamp", back: "backLamp", left: "left", right: "right" },
+
+  /**
+   * The glow at each lamp. The same size and brightness front and back; only the
+   * colour differs, so there is one set of numbers to tune rather than two.
+   *
+   *   size   width of the glow in metres
+   *   apart  fallback spacing either side of the centreline, as a fraction of
+   *          the car's own width. Only unmarked models use it
+   *   tilt   which way the glow faces: 0 lies it flat on its back, 1 stands it
+   *          upright facing down the road.
+   *
+   *          Flat, it sits in the same plane as the road and the bonnet, so it
+   *          reads as a stain on the paintwork rather than a lamp. Upright, it
+   *          stands proud of the bodywork and reads as a bulb — but it turns
+   *          with the car, so a car crossing the view shows it more edge-on.
+   *
+   *          Measured against this camera, the fraction of a lamp it can see is
+   *          about half at 0 whichever road the car is on; at 1 it is 0.79 for
+   *          cars coming up the near road and 0.31 for cars crossing. 0.8 is the
+   *          evenest of the standing values (0.59 / 0.48). The ones to avoid are
+   *          in the middle: around 0.4 a lamp on the far road goes edge-on and
+   *          all but disappears.
+   *   brightness 0 to 1
+   */
+  lamp: { size: 0.8, apart: 0.64, tilt: 1, brightness: 1 },
+
+  /**
+   * A dodgy connection on a few cars: their headlamps stutter on and off.
+   *
+   * Only the headlamps do this, and a lamp always takes its beam with it — a
+   * cone of light left lying on the road under a lamp that has just gone out is
+   * the one thing that would give the trick away.
+   *
+   *   cars    how much of the fleet has a fault at all, 0 to 1. 0 turns it off
+   *   both    of those cars, how many lose both lamps rather than just one
+   *   steady  seconds of normal light between bouts (a range)
+   *   stutter how long one bout lasts, in seconds (a range)
+   *   rate    on-off flickers per second during a bout. Higher reads as a loose
+   *           contact, lower as a lamp on its way out
+   */
+  flicker: {
+    cars: 0.25,
+    both: 0.4,
+    steady: { min: 1.2, max: 6 },
+    stutter: { min: 0.3, max: 0.75 },
+    rate: 14,
+  },
 };
 
 /* ------------------------------------------------------------- street lamps -- */

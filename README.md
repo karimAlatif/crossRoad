@@ -195,13 +195,46 @@ peak just ahead of the bumper and then a long decay that reaches zero *before*
 the plane ends, so the far end has nothing to cut off against. `HEADLIGHT.spread`
 is those four numbers.
 
-Each car throws **two cones, one per headlamp**, not one down the middle, and
-carries a **pair** of lamps at each end. Both are instances of the same source
+**Lamp positions come from the model.** A car may carry a `frontLamp` and a
+`backLamp` node, each with a `left` and a `right` child; a headlamp and its cone
+go at each front marker, and a single tail light at the midpoint of the back
+pair. The models are different shapes, so a position measured off the bumper is
+only ever right for some of them — a taxi's headlamps and a van's are not in the
+same place, and nothing in a bounding box knows that.
+
+Markers are read from the *template* rather than the clone, so it makes no odds
+whether Babylon carries empty nodes across when a mesh is cloned. A car without
+them falls back to `lamp.height` and `lamp.apart` off the measured bumper, which
+means the two coexist: export a model with markers and it starts using them, with
+nothing else to change.
+
+**The lamps hang off the bottom of the car's animation stack**, so they rock with
+the idle shudder, dip with the brake and tumble with a wreck. A lamp bolted to
+the lane node instead stays perfectly level while the car it belongs to rolls
+around, and reads as painted on.
+
+The cones do not follow: they hang off the lane node, which carries position and
+heading but no pitch or roll. A patch of lit road that tilts with the bodywork
+cuts straight through the surface it is lying on.
+
+The mount coordinates are the same either way — every node between the two is at
+rest until an animation moves it — so which parent a light takes is purely a
+question of what should move it.
+
+Each car throws **two cones, one per headlamp**, not one down the middle. Both are instances of the same source
 meshes, so the extra realism costs no draw calls at all.
 
-The lamps sit at lamp height and turn to face the camera, rather than lying flat
-on the road at the bumper — a flat glow down there spills out around the car and
-reads as light pooling *underneath* it.
+The lamps sit at lamp height rather than road height — a glow down at the bumper
+spills out around the car and reads as light pooling *underneath* it.
+
+They all lie flat, facing up, and **none of them is billboarded**. Billboarding
+writes the world matrix directly, and it cannot do that correctly through a
+parent chain containing the glTF root's `(1, 1, -1)` mirror: it put the lamps at
+`y = -1.5` instead of `+0.55`, under the road, where nothing they were given had
+any visible effect. Lying flat needs no special case, costs nothing per frame,
+and reads from every angle the camera can reach — it is always above the
+junction. The street lamp bulbs had the same tag, made doubly meaningless by the
+`freezeWorldMatrix` beside it, and are flat for the same reason.
 
 Street lamps are placed from the model, not measured: every `SM_Prop_LightPole_Base`
 in the .glb carries a child node named **`spot`** at the end of its arm, which is

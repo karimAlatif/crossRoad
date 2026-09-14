@@ -1,5 +1,6 @@
 import {
   AnimationGroup,
+  Matrix,
   Quaternion,
   TransformNode,
   Vector3,
@@ -9,9 +10,9 @@ import {
   type Mesh,
   type Scene,
 } from "@babylonjs/core";
-import { ANIM, TRAFFIC } from "./config";
+import { ANIM, HEADLIGHT, TRAFFIC } from "./config";
 import { createCarClips, IDLE_LENGTH } from "./carAnimations";
-import { createHeadlights } from "./carHeadlights";
+import { createHeadlights, type LampMounts } from "./carHeadlights";
 
 /**
  * One drivable car.
@@ -153,6 +154,7 @@ export function createCarFactory(
     const bounds = body.getHierarchyBoundingVectors(true);
     const length = bounds.max.z - bounds.min.z;
     const width = bounds.max.x - bounds.min.x;
+    const height = bounds.max.y - bounds.min.y;
 
     // Centre the footprint on the rig and rest the wheels on the road.
     body.position.set(
@@ -187,7 +189,14 @@ export function createCarFactory(
     }
 
     root.parent = space;
-    headlights?.attach(root, length, width);
+    // The lamps hang off the bottom of the animation stack and inherit every clip
+    // the car plays; the cones hang off `root`, stay flat on the road, and are
+    // slid and swung to match the pose those same nodes are holding.
+    headlights?.attach(
+      root,
+      [idle, brake, move, crash],
+      lampMounts(template, body.position, length, width, height),
+    );
 
     const idleLayer = loopingLayer(scene, `car${id}.idle`, clips.idle, idle, ANIM.idle.speed);
     const brakeLayer = oneShotLayer(scene, `car${id}.brake`, clips.brake, brake, ANIM.brake.speed);
@@ -324,3 +333,76 @@ function reset(node: TransformNode): void {
   node.rotation.setAll(0);
   node.scaling.setAll(1);
 }
+
+/**
+ * Where a car's lamps belong, in its rig's own space.
+ *
+ * Read from marker nodes in the model first: a `forntLamp` and a `backLamp`
+ * (that spelling is the model's, not a slip), each with a `left` and a `right`
+ * child. A lamp goes at each of the four, exactly where the marker sits — the
+ * models are different shapes, and a position measured off the bumper is only
+ * ever right for some of them. Nothing is added to a marker's position.
+ *
+ * Markers are read from the *template* rather than the clone, so it makes no
+ * difference whether Babylon carries empty nodes across when a mesh is cloned.
+ * `offset` is the shift the clone's body was given to centre its footprint on
+ * the rig; adding it is not a fudge but the same move the bodywork made, and
+ * without it the lamps would sit where the car used to be parked in the city.
+ *
+ * 8 of the 20 models carry markers. The rest fall back to the bounding box, so
+ * the two coexist: export a car with markers and it starts using them, with
+ * nothing else to change. The fallback takes its height from the car's own roof
+ * rather than a number in the config — a van and a hatchback do not carry their
+ * lamps at the same height, and one figure for both is wrong for at least one.
+ */
+function lampMounts(
+  template: Mesh,
+  offset: Vector3,
+  length: number,
+  width: number,
+  height: number,
+): LampMounts {
+  const { mounts, lamp } = HEADLIGHT;
+  const toLocal = Matrix.Invert(template.getWorldMatrix());
+
+  const pair = (group: string): Vector3[] => {
+    const node = template.getDescendants(false, (child) => child.name === group)[0];
+    if (!node) return [];
+
+    return [mounts.left, mounts.right]
+      .map((side) => node.getDescendants(false, (child) => child.name === side)[0])
+      .filter((side): side is TransformNode => !!side)
+      .map((side) => {
+        side.computeWorldMatrix(true);
+        // Into the template's space, then into the rig's by the same shift the
+        // body was given.
+        return Vector3.TransformCoordinates(side.getAbsolutePosition(), toLocal).addInPlace(offset);
+      });
+  };
+
+  const nose = length / 2;
+  const side = (width / 2) * lamp.apart;
+  const front = pair(mounts.front);
+  const back = pair(mounts.back);
+
+  return {
+    front: front.length > 0 ? front : [
+      new Vector3(-side, height * FALLBACK_FRONT, nose),
+      new Vector3(side, height * FALLBACK_FRONT, nose),
+    ],
+    back: back.length > 0 ? back : [
+      new Vector3(-side, height * FALLBACK_BACK, -nose),
+      new Vector3(side, height * FALLBACK_BACK, -nose),
+    ],
+  };
+}
+
+/**
+ * Where the lamps go on a car with no markers, as a fraction of its own height.
+ *
+ * Both figures are the average of the eight models that *are* marked: their
+ * headlamps sit at 0.42 of the roof and their rear lamps a little higher, at
+ * 0.53. An unmarked car therefore lands where a marked car of its shape would.
+ */
+const FALLBACK_FRONT = 0.42;
+const FALLBACK_BACK = 0.53;

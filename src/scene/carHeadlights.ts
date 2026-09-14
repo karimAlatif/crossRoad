@@ -5,20 +5,55 @@ import {
   MeshBuilder,
   StandardMaterial,
   Texture,
+  TransformNode,
+  Vector3,
   type AbstractMesh,
   type Scene,
-  type TransformNode,
 } from "@babylonjs/core";
 import { HEADLIGHT } from "./config";
 
+/**
+ * Where one car's lamps go, in its own rig space. Read from marker nodes in the
+ * model where they exist, measured off the bumper where they do not.
+ */
+export type LampMounts = {
+  /** A headlamp, and a beam, at each of these. */
+  front: Vector3[];
+  /** A rear lamp at each of these. No beam: a tail light lights nothing. */
+  back: Vector3[];
+};
+
 export type Headlights = {
-  /** Hangs a set of lights on one car. */
-  attach: (root: TransformNode, carLength: number, carWidth: number) => void;
+  /**
+   * Hangs a set of lights on one car.
+   *
+   * `road` is the car's lane node, carrying only its position and heading.
+   * `anim` is the chain of animated nodes below it, outermost first — the lamps
+   * hang off the last of them, and the beams read their pose off all of them.
+   */
+  attach: (road: TransformNode, anim: TransformNode[], mounts: LampMounts) => void;
   dispose: () => void;
 };
 
 /** Holds the first mesh of its kind; everything after it is an instance. */
 type Source = { mesh: Mesh | null };
+
+/** One car's beams, and the animated nodes whose pose they answer to. */
+type BeamRig = { node: TransformNode; anim: TransformNode[] };
+
+/**
+ * One car's dodgy headlamp, mid-stutter.
+ *
+ * `lights` holds the lamp *and* the beam that belongs to it, so the two always
+ * go dark together. `until` is the clock reading at which the current phase ends
+ * and the other one begins.
+ */
+type Fault = {
+  lights: AbstractMesh[];
+  until: number;
+  stuttering: boolean;
+  lit: boolean;
+};
 
 /**
  * Car lights, done without a single real light.
@@ -30,37 +65,54 @@ type Source = { mesh: Mesh | null };
  * just as well from a camera locked above the junction.
  *
  * Every car carries six planes — a cone of light from each headlamp, a pair of
- * lamps at the bumper and a pair at the tail — and every car after the first
+ * lamps at the bumper and a pair at the back — and every car after the first
  * instances those same three meshes. Hardware instancing then draws the whole
  * fleet in three calls whether that is ten cars or a hundred.
  *
- * The cones hang off the car's lane node so they stay flat on the road: light
- * lying on tarmac should not pitch up with the nose when the car dives, or it
- * cuts through it. The lamps sit at lamp height and turn to face the camera,
- * which is what keeps them reading as lights *on* the car rather than as glows
- * pooled underneath it.
+ * The lamps hang off the bottom of the car's animation stack, so they rock with
+ * the idle shudder, dip with the brake and tumble with a wreck — a lamp that
+ * stays level while the car it is bolted to rolls around reads as painted on.
+ * They sit exactly where the model's own marker nodes put them, front and back
+ * alike, with nothing added: a headlamp belongs where the car has a headlamp.
+ *
+ * The cones follow the same motion but cannot be hung the same way. A cone is a
+ * patch of light lying on the road, and the car's pitch is large: a 0.45 rad
+ * nose-dive swings the centre of a six-metre cone 1.78 m *below* the tarmac,
+ * taking the whole thing out of sight. So the beams hang off the lane node and
+ * are handed the car's pose as a slide instead of a tilt — they swing with its
+ * yaw, and a dive pulls the pool of light in towards the bumper rather than
+ * tipping it under the road. Which is what a dipping headlight really does.
+ *
+ * Finally, a quarter of the fleet has a bad connection and stutters. That costs
+ * nothing extra to draw — a faulty lamp is simply left out of its instance
+ * buffer for the frames it is dark.
  */
 export function createHeadlights(scene: Scene): Headlights | null {
   if (!HEADLIGHT.enabled) return null;
 
-  const { beam, lamp, tail } = HEADLIGHT;
+  const { beam, lamp, flicker } = HEADLIGHT;
+  /** 0 stands the glow upright facing the road, a quarter turn lies it flat. */
+  const lampPitch = (Math.PI / 2) * (1 - lamp.tilt);
 
   // Colour is baked into each texture rather than set on the material. See the
   // note on `additive` below — StandardMaterial adds its emissive texture to
   // `emissiveColor` instead of multiplying, so a white texture would force the
   // result to white no matter what colour the material asked for.
   const cone = beamTexture(scene, HEADLIGHT.frontColour, beam.brightness);
-  const frontBulb = bulbTexture(scene, "headlight.lampTex", HEADLIGHT.frontColour, lamp.brightness);
-  const tailBulb = bulbTexture(scene, "headlight.tailTex", HEADLIGHT.tailColour, tail.brightness);
+  const frontBulb = bulbTexture(scene, "headlight.frontTex", HEADLIGHT.frontColour, lamp.brightness);
+  const backBulb = bulbTexture(scene, "headlight.backTex", HEADLIGHT.backColour, lamp.brightness);
 
   const beamMaterial = additive(scene, "headlight.beamMat", cone);
-  const lampMaterial = additive(scene, "headlight.lampMat", frontBulb);
-  const tailMaterial = additive(scene, "headlight.tailMat", tailBulb);
+  const frontMaterial = additive(scene, "headlight.frontMat", frontBulb);
+  const backMaterial = additive(scene, "headlight.backMat", backBulb);
 
   const beamSource: Source = { mesh: null };
-  const lampSource: Source = { mesh: null };
-  const tailSource: Source = { mesh: null };
+  const frontSource: Source = { mesh: null };
+  const backSource: Source = { mesh: null };
   const parts: AbstractMesh[] = [];
+  const rigs: BeamRig[] = [];
+  const faults: Fault[] = [];
+  let clock = 0;
 
   const place = (
     source: Source,
@@ -72,9 +124,9 @@ export function createHeadlights(scene: Scene): Headlights | null {
     x: number,
     y: number,
     z: number,
-    /** Flat lies on the road; upright turns to face the camera. */
-    flat: boolean,
-  ) => {
+    /** Quarter turn lies the plane flat; 0 leaves it upright facing the road. */
+    pitch: number,
+  ): AbstractMesh => {
     let mesh: AbstractMesh;
     if (source.mesh) {
       mesh = source.mesh.createInstance(name);
@@ -94,54 +146,179 @@ export function createHeadlights(scene: Scene): Headlights | null {
     mesh.parent = parent;
     mesh.position.set(x, y, z);
     // Both faces draw, so which way the normal ended up pointing does not matter.
-    if (flat) mesh.rotation.set(Math.PI / 2, 0, 0);
-    else mesh.billboardMode = Mesh.BILLBOARDMODE_ALL;
+    //
+    // None of these is billboarded, and that is deliberate: billboarding writes
+    // the world matrix directly, and it cannot do that correctly through a parent
+    // chain containing the glTF root's (1, 1, -1) mirror — it put the lamps at
+    // y = -1.5 rather than +0.55, under the road, where nothing they were given
+    // had any visible effect. A fixed pitch needs no special case and costs
+    // nothing per frame.
+    mesh.rotation.set(pitch, 0, 0);
     parts.push(mesh);
+    return mesh;
   };
 
-  const attach = (root: TransformNode, carLength: number, carWidth: number) => {
-    const nose = carLength / 2;
-    const side = (carWidth / 2) * lamp.apart;
+  const attach = (road: TransformNode, anim: TransformNode[], mounts: LampMounts) => {
+    // The bottom of the animation stack. Anything parented here inherits every
+    // clip the car plays, and the mount coordinates work unchanged: every node
+    // in between is at rest until an animation moves it.
+    const body = anim[anim.length - 1] ?? road;
 
-    for (const dx of [-side, side]) {
-      // One cone per lamp rather than one down the middle. Where the pair
-      // overlaps ahead of the car they sum, which is what a real pair does.
-      place(
+    // The beams get a node of their own under the lane, driven by `sync` below.
+    const beams = new TransformNode(`${road.name}.beams`, scene);
+    beams.parent = road;
+    rigs.push({ node: beams, anim });
+
+    // Each headlamp and the cone it throws, kept together so a stutter takes
+    // both. Built even when this car turns out to be sound — it is two array
+    // pushes, and it saves branching inside the loop.
+    const headlamps: AbstractMesh[][] = [];
+
+    for (const at of mounts.front) {
+      const cone = place(
         beamSource,
         "headlight.beam",
         beamMaterial,
         beam.endWidth,
         beam.length,
-        root,
-        dx,
+        beams,
+        at.x,
         ROAD_CLEARANCE,
-        nose + beam.length / 2,
-        true,
+        at.z + beam.length / 2,
+        Math.PI / 2,
       );
+      const bulb = place(
+        frontSource,
+        "headlight.lamp",
+        frontMaterial,
+        lamp.size,
+        lamp.size,
+        body,
+        at.x,
+        at.y,
+        at.z,
+        lampPitch,
+      );
+      headlamps.push([bulb, cone]);
+    }
 
-      // Clear of the bodywork and at lamp height, so the glow sits on the car
-      // rather than spilling out from under it.
-      place(lampSource, "headlight.lamp", lampMaterial, lamp.size, lamp.size, root, dx, lamp.height, nose + 0.15, false);
-      place(tailSource, "headlight.tail", tailMaterial, tail.size, tail.size, root, dx, tail.height, -nose - 0.15, false);
+    // The back gets the same treatment as the front, at its own markers, in red.
+    // No cone: a rear lamp is something you see, not something that lights the
+    // road, and a red pool behind every car would read as brake lights stuck on.
+    for (const at of mounts.back) {
+      place(
+        backSource,
+        "headlight.back",
+        backMaterial,
+        lamp.size,
+        lamp.size,
+        body,
+        at.x,
+        at.y,
+        at.z,
+        lampPitch,
+      );
+    }
+
+    // Is this one of the cars with a bad connection?
+    if (headlamps.length > 0 && Math.random() < flicker.cars) {
+      const both = Math.random() < flicker.both;
+      const chosen = both
+        ? headlamps
+        : [headlamps[Math.floor(Math.random() * headlamps.length)]];
+      faults.push({
+        lights: chosen.flat(),
+        // Scattered over a whole steady period, so the fleet does not fault in
+        // unison on the first frame.
+        until: Math.random() * flicker.steady.max,
+        stuttering: false,
+        lit: true,
+      });
     }
   };
+
+  /**
+   * Swings each car's beams round to match how that car is sitting.
+   *
+   * The angles are read straight off the animated nodes rather than decomposed
+   * out of a world matrix: they are the values the clips actually wrote, they
+   * cost nothing to fetch, and taking them this way touches none of Babylon's
+   * dirty-matrix bookkeeping — so it makes no difference whether this lands
+   * before or after the traffic step. Summing them is exact for yaw, where only
+   * the shudder and a wreck's spin ever write, and near enough for pitch, where
+   * the dive and the lift are one-shots that cancel each other on the way in.
+   *
+   * Cars are pooled, so this list stops growing the moment the roads are built;
+   * the ones currently parked off-road are disabled, and skipped.
+   */
+  const sync = () => {
+    // A frame's worth of time, on the same terms the simulation uses: a long
+    // frame must not fast-forward a stutter, and a zero-length one is not a frame.
+    const dt = Math.min(scene.getEngine().getDeltaTime() / 1000, MAX_STEP);
+    if (dt > 0) {
+      clock += dt;
+      for (const fault of faults) {
+        if (clock >= fault.until) {
+          fault.stuttering = !fault.stuttering;
+          fault.until = clock + between(fault.stuttering ? flicker.stutter : flicker.steady);
+        }
+        // A square wave off the shared clock while it is playing up, steady
+        // otherwise. No per-lamp phase to carry, and no randomness per frame —
+        // the same lamp keeps the same rhythm for the length of one bout.
+        const lit = !fault.stuttering || Math.floor(clock * flicker.rate) % 2 === 0;
+        if (lit !== fault.lit) {
+          fault.lit = lit;
+          for (const light of fault.lights) light.setEnabled(lit);
+        }
+      }
+    }
+
+    for (const rig of rigs) {
+      if (!rig.node.isEnabled()) continue;
+
+      let pitch = 0;
+      let yaw = 0;
+      for (const node of rig.anim) {
+        pitch += node.rotation.x;
+        yaw += node.rotation.y;
+      }
+
+      rig.node.rotation.y = yaw;
+      // Nose down throws the light short; nose up throws it long.
+      rig.node.position.z = -pitch * beam.follow;
+    }
+  };
+
+  const observer = scene.onBeforeRenderObservable.add(sync);
 
   return {
     attach,
     dispose: () => {
+      scene.onBeforeRenderObservable.remove(observer);
+      for (const rig of rigs) rig.node.dispose();
+      rigs.length = 0;
       for (const part of parts) part.dispose();
+      faults.length = 0;
       beamMaterial.dispose();
-      lampMaterial.dispose();
-      tailMaterial.dispose();
+      frontMaterial.dispose();
+      backMaterial.dispose();
       cone.dispose();
       frontBulb.dispose();
-      tailBulb.dispose();
+      backBulb.dispose();
     },
   };
 }
 
 /** Just enough to keep a flat plane off the tarmac without it looking to float. */
 const ROAD_CLEARANCE = 0.2;
+
+/** A long frame (an alt-tab, a GC pause) must not fast-forward a stutter. */
+const MAX_STEP = 1 / 20;
+
+/** A number somewhere in an inclusive range. */
+function between(range: { min: number; max: number }): number {
+  return range.min + Math.random() * (range.max - range.min);
+}
 
 /**
  * The cone a headlamp throws on the road: it leaves the bumper as a narrow spot

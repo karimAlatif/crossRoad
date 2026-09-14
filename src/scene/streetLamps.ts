@@ -49,7 +49,6 @@ export function createStreetLamps(scene: Scene): StreetLamps {
     material: StandardMaterial,
     size: number,
     at: Vector3,
-    flat: boolean,
   ) => {
     let mesh: AbstractMesh;
     if (source.mesh) {
@@ -65,10 +64,11 @@ export function createStreetLamps(scene: Scene): StreetLamps {
       mesh = created;
     }
     mesh.position.copyFrom(at);
-    // The pool lies on the pavement; the bulb turns to face the camera so it
-    // reads as a lamp from any orbit angle.
-    if (flat) mesh.rotation.set(Math.PI / 2, 0, 0);
-    else mesh.billboardMode = Mesh.BILLBOARDMODE_ALL;
+    // Both the bulb and its pool lie flat, facing up. The bulb was billboarded
+    // before, which is meaningless next to the frozen matrix below — a frozen
+    // world matrix is never recomputed, so it would have held whatever the
+    // camera happened to be doing at load and then stopped tracking it.
+    mesh.rotation.set(Math.PI / 2, 0, 0);
     mesh.freezeWorldMatrix();
     parts.push(mesh);
   };
@@ -76,8 +76,8 @@ export function createStreetLamps(scene: Scene): StreetLamps {
   for (const spot of spots) {
     spot.computeWorldMatrix(true);
     const at = spot.getAbsolutePosition();
-    place(bulbSource, "lamp.bulb", bulbMaterial, bulb.size, at, false);
-    place(poolSource, "lamp.pool", poolMaterial, pool.size, new Vector3(at.x, pool.height, at.z), true);
+    place(bulbSource, "lamp.bulb", bulbMaterial, bulb.size, at);
+    place(poolSource, "lamp.pool", poolMaterial, pool.size, new Vector3(at.x, pool.height, at.z));
   }
 
   return {
