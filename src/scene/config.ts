@@ -297,7 +297,7 @@ export const ANIM = {
     /** Full left-right shakes per second. Raise it for a more agitated car. */
     speed: .9,
     /** How far it swings to each side, in radians. 0.1 is a clear, readable wiggle. */
-    swing: 0.13,
+    swing: 0.2,
   },
 
   /** Pulling up: the nose slopes down and springs back out of it. */

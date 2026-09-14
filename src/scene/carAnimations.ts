@@ -64,12 +64,26 @@ function idleClip(): Animation[] {
   const { swing } = ANIM.idle;
 
   return [
-    clip("idle.shake", "rotation.z", Animation.ANIMATIONLOOPMODE_CYCLE, [
+    clip("idle.shakeROTZ", "rotation.z", Animation.ANIMATIONLOOPMODE_CYCLE, [
       { frame: 0, value: 0 },
       { frame: F * 0.25, value: swing },
       { frame: F * 0.5, value: 0 },
       { frame: F * 0.75, value: -swing },
       { frame: F, value: 0 },
+    ]),
+    clip("idle.shakeROTY", "rotation.y", Animation.ANIMATIONLOOPMODE_CYCLE, [
+      { frame: 0, value: 0 },
+      { frame: F * 0.25, value: swing / 1.5 },
+      { frame: F * 0.5, value: 0 },
+      { frame: F * 0.75, value: -swing / 1.5 },
+      { frame: F, value: 0 },
+    ]),
+    clip("idle.shakeSCALINGY", "scaling.y", Animation.ANIMATIONLOOPMODE_CYCLE, [
+      { frame: 0, value: 1 },
+      { frame: F * 0.25, value: 1 + swing * 2 },
+      { frame: F * 0.5, value: 1 },
+      { frame: F * 0.75, value: 1 + swing * 2 },
+      { frame: F, value: 1 },
     ]),
   ];
 }
