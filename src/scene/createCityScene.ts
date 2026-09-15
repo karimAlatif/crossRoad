@@ -13,6 +13,7 @@ import { createEnvironment } from "./environment";
 import { createLighting, registerShadowCasters } from "./lighting";
 import { QUALITY } from "./config";
 import { createPostProcess } from "./postProcess";
+import { createSound } from "./sound";
 import { readProps } from "./props";
 import { createStreetLamps } from "./streetLamps";
 import { createTraffic, type CrashEvent } from "./traffic";
@@ -55,6 +56,10 @@ export async function createCityScene(
   scene.skipPointerMovePicking = true;
   scene.blockMaterialDirtyMechanism = true;
 
+  // Started first so the sound files download alongside the city rather than
+  // after it. Nothing plays until the player's first click.
+  const sound = createSound(scene);
+
   const environment = createEnvironment(scene);
   const lighting = createLighting(scene, environment.sunDirection);
 
@@ -84,6 +89,9 @@ export async function createCityScene(
 
   onProgress(1, "Filling the roads");
   const traffic = createTraffic(scene, props.space, props.roads, lighting.shadows);
+  traffic.onSetOff.add((at) => sound.play("move", at));
+  traffic.onBrake.add((at) => sound.play("brake", at));
+  traffic.onCrash.add((event) => sound.play("accident", event.at));
 
   onProgress(1, "Lighting the block");
   const postFx = createPostProcess(scene, camera);
@@ -136,6 +144,7 @@ export async function createCityScene(
       scene.onPointerObservable.remove(pointer);
       lamps?.dispose();
       traffic.dispose();
+      sound.dispose();
       light.dispose();
       postFx.dispose();
       scene.dispose();

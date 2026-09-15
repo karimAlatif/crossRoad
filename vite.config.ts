@@ -3,10 +3,9 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  // The existing `assets/` folder is served as-is at the web root, so
-  // `assets/scene.glb` is fetched at runtime from `/scene.glb`. Nothing is
-  // copied or duplicated: drop new files in `assets/` and they are served.
-  publicDir: "assets",
+  // Every runtime asset lives in `public/`, which Vite serves as-is at the web
+  // root: `public/models/scene.glb` is fetched from `/models/scene.glb`, and a
+  // sound dropped in `public/sounds/` is fetched from `/sounds/<name>`.
   server: { port: 5173, open: true, host: true },
   build: {
     target: "es2022",

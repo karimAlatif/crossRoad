@@ -1,6 +1,6 @@
 # blueMino — Downtown Crossroad
 
-A React + Babylon.js front end for the POLYGON City block in `assets/scene.glb`,
+A React + Babylon.js front end for the POLYGON City block in `public/models/scene.glb`,
 framed on the intersection the game is played on. The `Cars` group ships hidden.
 
 ```bash
@@ -318,9 +318,9 @@ poles stand at the corners of the junction; their average is the camera target.
 Re-export the city from Unity and the framing follows it. `CROSSROAD` in
 `config.ts` is only the fallback.
 
-**`assets/` is the web root.** `vite.config.ts` sets `publicDir: "assets"`, so
-`assets/scene.glb` is served at `/scene.glb` with nothing copied or duplicated.
-Drop new files in `assets/` and they are served.
+**`public/` is the web root.** Vite serves it as-is, so `public/models/scene.glb`
+is fetched from `/models/scene.glb`. Models go in `public/models/`, sounds in
+`public/sounds/` — see `SOUND` in `src/scene/config.ts` for wiring a sound up.
 
 **The sky is baked late on purpose.** The IBL cube is captured from the sky dome,
 but on the first frame that shader is still compiling — a probe fired then

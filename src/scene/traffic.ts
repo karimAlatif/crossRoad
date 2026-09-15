@@ -20,6 +20,13 @@ export type CrashEvent = {
 export type Traffic = {
   update: (dt: number, isGreen: boolean) => void;
   onCrash: Observable<CrashEvent>;
+  /**
+   * A car setting off from a standstill, and a car starting to brake hard. Each
+   * carries where the car is, in world space. The vector is reused: read it
+   * straight away and copy it if it has to be kept.
+   */
+  onSetOff: Observable<Vector3>;
+  onBrake: Observable<Vector3>;
   carCount: number;
   crashes: () => number;
   dispose: () => void;
@@ -132,6 +139,8 @@ export function createTraffic(
   const factory = createCarFactory(scene, space, shadows);
   const effects = createCrashEffects(scene);
   const onCrash = new Observable<CrashEvent>();
+  const onSetOff = new Observable<Vector3>();
+  const onBrake = new Observable<Vector3>();
 
   const lanes: Lane[] = [];
   let picked = 0;
@@ -200,7 +209,10 @@ export function createTraffic(
         // The lift plays once, on the transition out of standstill — that is what
         // "when the car starts moving" means, and it keeps the clip off every
         // small mid-cruise adjustment.
-        if (live && car.v <= STOPPED && next > STOPPED) car.rig.playMove();
+        if (live && car.v <= STOPPED && next > STOPPED) {
+          car.rig.playMove();
+          onSetOff.notifyObservers(car.rig.root.getAbsolutePosition());
+        }
 
         // Fire the dive once when a stop begins, and re-arm only after the car
         // has stopped shedding speed — otherwise it would retrigger every frame.
@@ -214,7 +226,10 @@ export function createTraffic(
         const hard = rules.brake * ANIM.brake.trigger;
         if (!car.braking && decel >= hard) {
           car.braking = true;
-          if (live) car.rig.playBrake();
+          if (live) {
+            car.rig.playBrake();
+            onBrake.notifyObservers(car.rig.root.getAbsolutePosition());
+          }
         } else if (car.braking && decel < hard * 0.4) {
           car.braking = false;
         }
@@ -414,10 +429,14 @@ export function createTraffic(
   return {
     update,
     onCrash,
+    onSetOff,
+    onBrake,
     carCount: cars.length,
     crashes: () => crashes,
     dispose: () => {
       onCrash.clear();
+      onSetOff.clear();
+      onBrake.clear();
       effects.dispose();
       for (const car of cars) car.rig.dispose();
       factory.dispose();

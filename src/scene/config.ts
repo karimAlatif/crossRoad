@@ -23,7 +23,8 @@ export const CROSSROAD_MARKERS = [
 /** Top-level group in the .glb holding the 30 traffic vehicles. */
 export const CARS_GROUP = "Cars";
 
-export const ASSET_URL = "/scene.glb";
+/** The city model, served from `public/models/`. */
+export const ASSET_URL = "/models/scene.glb";
 
 /** The locked-off 3/4 game view, and how far the player may stray from it. */
 export const CAMERA = {
@@ -489,6 +490,85 @@ export const LIGHT_TRAIL = {
 };
 
 
+
+/* -------------------------------------------------------------------- sound -- */
+
+/**
+ * The game's sound. Every file lives in `public/sounds/` and is written here as
+ * a path from the web root:
+ *
+ *   files: ["/sounds/brake.mp3"]
+ *
+ * Leave `files` empty until the sound exists; an empty sound is simply silent and
+ * costs nothing. List several files and each play picks one at random, which is
+ * the easiest way to stop a sound that happens often from getting repetitive.
+ * MP3, OGG and WAV all work.
+ *
+ * Nothing can be heard until the player first clicks or presses a key — browsers
+ * do not allow sound before that — so the theme starts on that first click.
+ *
+ * Sounds that overlap are handled for you:
+ *
+ *   merge      hits of the same sound closer together than this many seconds
+ *              become one, a little louder, rather than a pile of copies. A whole
+ *              queue pulling away on one green is one sound, not twelve
+ *   maxVoices  how many of this sound can play at once. A new one past the limit
+ *              fades out the oldest and takes its place
+ *   pitch      each play is sped up or slowed down by a random amount in this
+ *              range, so repeats do not sound identical
+ *   duck       while this sound plays, the theme drops to `amount` of its volume
+ *              for `seconds`, then comes back
+ *
+ * Volumes are 0 to 1.
+ */
+export const SOUND = {
+  enabled: true,
+  /** Everything together. */
+  master: 1,
+  /** The most sound effects playing at once, across all of them. */
+  maxVoices: 12,
+
+  /** Background music, looping for the whole game, faded in over `fadeIn` seconds. */
+  theme: { files: [] as string[], volume: 0.6, fadeIn: 2.5 },
+
+  /** A car pulling away from the lights. */
+  move: {
+    files: [] as string[],
+    volume: 0.5,
+    maxVoices: 3,
+    merge: 0.18,
+    pitch: { min: 0.92, max: 1.08 },
+  },
+
+  /** A car braking hard. */
+  brake: {
+    files: [] as string[],
+    volume: 0.55,
+    maxVoices: 3,
+    merge: 0.18,
+    pitch: { min: 0.9, max: 1.1 },
+  },
+
+  /** Two cars colliding. */
+  accident: {
+    files: [] as string[],
+    volume: 0.9,
+    maxVoices: 3,
+    merge: 0.06,
+    pitch: { min: 0.95, max: 1.05 },
+    duck: { amount: 0.45, seconds: 1.2 },
+  },
+
+  /**
+   * Where a sound happened changes how it sounds, gently.
+   *
+   *   pan       how far towards the left or right speaker a sound at the edge of
+   *             the screen goes. 0 keeps everything centred
+   *   near      metres from the junction within which a sound plays at full volume
+   *   far       metres at which it has dropped to `quietest`
+   */
+  space: { pan: 0.6, near: 18, far: 70, quietest: 0.3 },
+};
 
 /* --------------------------------------------------------------- headlights -- */
 
