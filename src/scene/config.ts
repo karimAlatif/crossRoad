@@ -185,7 +185,7 @@ export const TRAFFIC = {
  */
 export const ROAD_ONE = {
   /** How many cars travel together in one wave. */
-  carsPerWave: { min: 4, max: 8 },
+  carsPerWave: { min: 1, max: 8 },
   /**
    * Cruise speed, drawn once per wave rather than per car.
    *
@@ -199,7 +199,7 @@ export const ROAD_ONE = {
    * run the junction in, so it is the main dial for how hard the game is:
    * longer means more room to cross.
    */
-  breakTime: { min: 100, max: 200 },
+  breakTime: { min: 1, max: 1.5 },
   /**
    * Bumper gap between cars inside a wave, drawn once per wave like `speed`, so
    * one wave runs tight and the next runs loose.
@@ -212,7 +212,7 @@ export const ROAD_ONE = {
    * cars a row and a wave is plainly a group; at 40 it holds two, and a wave of
    * eight is spread over more road than exists.
    */
-  spawnGap: { min: 2, max: 12 },
+  spawnGap: { min: 2, max: 30 },
 };
 
 /**
@@ -253,7 +253,7 @@ export const CRASH = {
    *   count     sparks per impact
    *   size      how big a spark starts and ends, in metres
    */
-  sparks: { capacity: 280, count: 45, size: { from: 1, to: 2 } },
+  sparks: { capacity: 800, count: 45, size: { from: 8, to: 16 } },
 };
 
 export const LIGHT = {
