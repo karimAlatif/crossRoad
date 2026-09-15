@@ -7,7 +7,7 @@ export default defineConfig({
   // `assets/scene.glb` is fetched at runtime from `/scene.glb`. Nothing is
   // copied or duplicated: drop new files in `assets/` and they are served.
   publicDir: "assets",
-  server: { port: 5173, open: true },
+  server: { port: 5173, open: true, host: true },
   build: {
     target: "es2022",
     // Babylon is a big single dependency; the default warning threshold is noise.

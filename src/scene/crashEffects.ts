@@ -5,6 +5,8 @@ import {
   Vector3,
   type Scene,
 } from "@babylonjs/core";
+import { grow } from "./carEffects";
+import { CRASH } from "./config";
 
 export type CrashEffects = {
   burst: (at: Vector3) => void;
@@ -14,6 +16,7 @@ export type CrashEffects = {
 
 /**
  * The cartoon impact: a white flash, a spray of sparks and a slow smoke puff.
+ * The sparks are tuned in `CRASH.sparks`.
  * All three share one generated dot texture, so nothing is downloaded.
  */
 export function createCrashEffects(scene: Scene): CrashEffects {
@@ -30,17 +33,19 @@ export function createCrashEffects(scene: Scene): CrashEffects {
   flash.minEmitPower = 0.4;
   flash.maxEmitPower = 1.2;
 
-  const sparks = system(scene, "crash.sparks", dot, 90);
-  sparks.minSize = 0.1;
-  sparks.maxSize = 0.34;
-  sparks.minLifeTime = 0.4;
-  sparks.maxLifeTime = 0.9;
-  sparks.color1 = new Color4(1, 0.85, 0.35, 1);
-  sparks.color2 = new Color4(1, 0.45, 0.2, 1);
-  sparks.gravity = new Vector3(0, -16, 0);
+  // The sparks that used to come off a car pulling away, moved here: fast, hot
+  // and heavy, flung out in every direction and dragged straight back down.
+  const sparks = system(scene, "crash.sparks", dot, CRASH.sparks.capacity);
+  grow(sparks, CRASH.sparks.size);
+  sparks.minLifeTime = 0.2;
+  sparks.maxLifeTime = 0.55;
+  sparks.color1 = new Color4(1, 0.95, 0.62, 1);
+  sparks.color2 = new Color4(1, 0.5, 0.14, 1);
+  sparks.colorDead = new Color4(0.8, 0.2, 0.04, 0);
+  sparks.gravity = new Vector3(0, -26, 0);
   sparks.createSphereEmitter(0.6);
-  sparks.minEmitPower = 5;
-  sparks.maxEmitPower = 12;
+  sparks.minEmitPower = 4;
+  sparks.maxEmitPower = 11;
 
   const smoke = system(scene, "crash.smoke", dot, 40);
   smoke.minSize = 1;
@@ -64,7 +69,7 @@ export function createCrashEffects(scene: Scene): CrashEffects {
   return {
     burst: (at) => {
       fire(flash, at, 6);
-      fire(sparks, at, 55);
+      fire(sparks, at, CRASH.sparks.count);
       fire(smoke, at, 18);
     },
     puff: (at) => fire(smoke, at, 22),

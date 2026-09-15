@@ -199,7 +199,7 @@ export const ROAD_ONE = {
    * run the junction in, so it is the main dial for how hard the game is:
    * longer means more room to cross.
    */
-  breakTime: { min: 1, max: 2 },
+  breakTime: { min: 100, max: 200 },
   /**
    * Bumper gap between cars inside a wave, drawn once per wave like `speed`, so
    * one wave runs tight and the next runs loose.
@@ -246,6 +246,14 @@ export const CRASH = {
   hop: { min: 2.8, max: 5.2 },
   gravity: 15,
   bounce: 0.45,
+  /**
+   * The spray of sparks thrown out on impact.
+   *
+   *   capacity  sparks alive at once, across every crash on the road
+   *   count     sparks per impact
+   *   size      how big a spark starts and ends, in metres
+   */
+  sparks: { capacity: 280, count: 45, size: { from: 1, to: 2 } },
 };
 
 export const LIGHT = {
@@ -369,34 +377,118 @@ export const CAR_FX = {
   enabled: true,
 
   /**
-   * `idle` — the tailpipe of a car ticking over at the lights, coughing once at
-   * each extreme of the shake. The shake sets the rhythm, so a more agitated car
-   * smokes faster.
+   * `idle` — a soft breath out of the back of a stopped car.
    *
-   *   puff   particles per cough. Keep it low: every stopped car is doing this
-   *   spread how loosely the puff scatters, in units per second
+   * One source, behind the car and low, halfway across between the two
+   * `backLamp` markers. Deliberately faint and simple: every car waiting at the
+   * lights is doing it at once.
+   *
+   *   every   seconds between breaths
+   *   count   particles per breath
+   *   size    how big a particle starts and how far it has spread when it dies
+   *   spread  how loosely it drifts
    */
-  idle: { capacity: 220, puff: 3, spread: 0.45 },
+  idle: { capacity: 200, every: 0.35, count: 2, size: { from: 0.15, to: 0.8 }, spread: 0.15 },
 
   /**
-   * `move` — dust off the driven wheels as the car gets away, thrown backwards
-   * and settling rather than climbing.
+   * `move` — the getaway cloud, out from under a car that sets off.
    *
-   *   kick   particles as the wheels bite, per rear wheel
-   *   trail  particles at the top of the nose lift, per rear wheel
+   * Skid marks and the light trail are not part of this: every moving car has
+   * those — see SKID_MARK and LIGHT_TRAIL.
+   *
+   *   count   lobes as the wheels bite
+   *   after   more lobes at the top of the nose lift
    */
-  move: { capacity: 260, kick: 9, trail: 5, spread: 1.1 },
+  move: {
+    smoke: { capacity: 40, count: 10, after: 20, size: { from: .8, to: 1.5 }, spread: 1.3 },
+  },
 
   /**
-   * `brake` — tyre smoke as the car stops hard, shoved forward past the bumper
-   * because the car is still travelling when the tyres stop turning.
+   * `brake` — the same cloud as `move`, thrown out ahead of the car instead of
+   * behind it. Its own numbers, so the two can be tuned apart; they start equal.
    *
-   *   bite   particles as the brakes go on, per front wheel
-   *   squeal particles at the bottom of the dive, per front wheel — the bigger
-   *          of the two, because that is when the weight lands on the front
+   *   count   lobes as the brakes go on
+   *   after   more lobes at the bottom of the dive
    */
-  brake: { capacity: 300, bite: 5, squeal: 13, spread: 1 },
+  brake: {
+    smoke: { capacity: 20, count: 2, after: .25, size: { from: 1.5, to: 2 }, spread: 1 , maxPower: 2},
+  },
 };
+
+
+/* --------------------------------------------------------------- skid marks -- */
+
+/**
+ * Rubber on the tarmac behind every car that sets off.
+ *
+ * Two lines, on the ground under the `backLamp` `left` and `right` markers, held
+ * on to the car: the newest part of each line stretches from where it began to
+ * wherever the car is now, so the mark runs right up to the back of the car.
+ *
+ * Every range is drawn fresh for each car each time it sets off — from the
+ * lights, or onto the road — so no two cars lay quite the same rubber.
+ *
+ *   delay     seconds after setting off before the rubber starts
+ *   duration  seconds it keeps going
+ *   width     metres
+ *   seconds   how long the rubber stays on the road
+ *   every     metres per segment. Shorter follows the car more smoothly and
+ *             uses more of the pool
+ *   height    how far off the tarmac it lies — enough not to flicker against it
+ *   strength  0 to 1, how dark
+ *   fade      the last fraction of its life, over which it narrows away
+ *   pool      segments down at once
+ */
+export const SKID_MARK = {
+  enabled: true,
+  delay: { min: 0.05, max: 0.3 },
+  duration: { min: 0.3, max: 0.9 },
+  width: { min: 0.22, max: 0.34 },
+  seconds: { min: 4, max: 8 },
+  every: 1.5,
+  height: 0.05,
+  colour: new Color3(0, 0, 0),
+  strength: 0.5,
+  fade: 0.35,
+  pool: 400,
+  glowing: false,
+};
+
+/* -------------------------------------------------------------- light trail -- */
+
+/**
+ * A smear of tail light behind every moving car.
+ *
+ * One ribbon from each `backLamp` marker, `left` and `right`, at the lamps' own
+ * height, held on to the car so it starts right at the lamp. Any car faster than
+ * `minSpeed` has one — pulling away from the lights or cruising through.
+ *
+ * Every range is drawn fresh for each car each time it sets off.
+ *
+ *   minSpeed  metres per second before a car trails light
+ *   width     metres
+ *   seconds   how long the light lingers, so how long the trail is: at 20 m/s a
+ *             0.1 s trail is two metres
+ *   every     metres per segment
+ *   strength  0 to 1. Near 1 the additive layers clamp and wash out to white
+ *   fade      the last fraction of its life, over which it thins away
+ *   pool      segments alive at once. A moving car needs speed x seconds / every
+ *             per lamp, plus the one being stretched
+ */
+export const LIGHT_TRAIL = {
+  enabled: true,
+  minSpeed: 15,
+  width: { min: 0.25, max: 0.5 },
+  seconds: { min: 0.01, max: 0.08 },
+  every: 0.3,
+  colour: new Color3(1, 0.3, 0.1),
+  strength: 0.2,
+  fade: 5,
+  pool: 600,
+  glowing: true,
+};
+
+
 
 /* --------------------------------------------------------------- headlights -- */
 

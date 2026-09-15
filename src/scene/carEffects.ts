@@ -6,265 +6,369 @@ import {
   type Observer,
   type Scene,
 } from "@babylonjs/core";
-import { CAR_FX } from "./config";
+import { CAR_FX, LIGHT_TRAIL, SKID_MARK } from "./config";
 import { clipTiming } from "./carAnimations";
+import { createMarkPool, type MarkPool } from "./roadMarks";
 
 /**
- * One effect for each of the three clips a car can play.
+ * Everything a car leaves behind it.
  *
- * Every call takes a world position and the direction the car is pointing, and
- * fires a burst there and then. Nothing is attached to the car: smoke does not
- * travel with the vehicle that made it, it hangs where it was made and gets left
- * behind, which is most of what makes it read as smoke at all.
+ * The smoke calls take world positions and fire there and then. Nothing smoky is
+ * attached to the car: smoke hangs where it was made and gets left behind, which
+ * is most of what makes it read as smoke. The two ribbons are the opposite —
+ * they are held on to the car, and the caller keeps the handles that do it.
  */
 export type CarEffects = {
-  /** `idle` — a cough from the tailpipe, on the beat of the shake. */
+  /** `idle` — a soft breath out of the back of the car. */
   exhaust: (at: Vector3, forward: Vector3) => void;
-  /** `move` — dust thrown back off the driven wheels as the car pulls away. */
+  /** `move` — the getaway cloud. */
   launch: (at: Vector3, forward: Vector3) => void;
-  /** `brake` — tyre smoke shoved forward as the car noses down. */
-  skid: (at: Vector3, forward: Vector3) => void;
+  /** `brake` — the same cloud, thrown out ahead of the car. */
+  brake: (at: Vector3, forward: Vector3) => void;
+  /**
+   * One segment of light trail, from `from` to `to` at height `y`. Returns the
+   * handle to pass back next frame, or -1 if nothing could be laid.
+   */
+  trail: (handle: number, from: Vector3, to: Vector3, y: number, width: number, seconds: number) => number;
+  /** One segment of skid mark, on the tarmac. Same contract as `trail`. */
+  rubber: (handle: number, from: Vector3, to: Vector3, width: number, seconds: number) => number;
   dispose: () => void;
 };
 
 /**
- * The three particle effects, and the thing that keeps them honest: each one is
- * a *single* ParticleSystem shared by the whole fleet.
+ * One queued burst: where, which way, how loosely, and how many particles of it
+ * are still to be made.
+ */
+type Burst = { at: Vector3; aim: Vector3; spread: number; left: number };
+
+/**
+ * A particle system that several cars can fire on the same frame.
  *
- * That works because none of these is a continuous stream — they are all bursts.
- * A burst reads the emitter position and direction at the instant it is fired,
- * and every particle it makes then lives its own life in world space. So one
- * system can throw smoke under a car at one end of the junction on this frame
- * and under a different car at the other end on the next, and the two clouds sit
- * there independently. Forty cars cost the same three draw calls as one.
+ * The obvious way to fire a burst — move the emitter, set `manualEmitCount` —
+ * holds exactly one burst per frame. A second car asking on the same frame moves
+ * the emitter again and overwrites the count, so only the last car of the frame
+ * gets any smoke. That is what used to happen when a queue pulled away on a green.
  *
- * The timing comes from `clipTiming()` rather than from numbers typed in here.
- * Each of the one-shots fires twice: once as the clip starts, and once at the
- * moment the pose peaks — the bottom of the brake dive, the top of the pull-away
- * lift. That second burst is what ties the smoke to the animation instead of
- * merely near it, and it moves on its own if the clips are ever retuned.
+ * So each system keeps a queue instead. Every request is appended, the count is
+ * the total of the queue, and Babylon's custom position and direction hooks hand
+ * each new particle to the burst it belongs to. Babylon creates a particle's
+ * position before its direction, so the position hook picks the burst and the
+ * direction hook reuses it.
+ */
+type Emitter = {
+  particles: ParticleSystem;
+  queue: Burst[];
+  /** Bursts from earlier frames, kept for reuse so a busy junction allocates nothing. */
+  spare: Burst[];
+  cursor: number;
+  current: Burst | null;
+  owed: number;
+};
+
+/**
+ * The car effects: three particle systems shared by the whole fleet, and two
+ * ribbon pools — five draw calls for every effect on every car.
+ *
+ * The move and brake clouds are the same smoke with their own numbers; the brake
+ * one is simply thrown forward from the nose instead of backward from under the
+ * car. Each fires twice: once as its clip starts, and again at the moment the
+ * pose peaks — the top of the lift, the bottom of the dive — worked out by
+ * `clipTiming()` from the keyframes themselves.
  */
 export function createCarEffects(scene: Scene): CarEffects | null {
   if (!CAR_FX.enabled) return null;
 
-  const dot = softDot(scene);
+  const { idle, move, brake } = CAR_FX;
+  const cloud = cloudTexture(scene);
+  const haze = hazeTexture(scene);
   const timing = clipTiming();
 
-  // --- idle: a tired engine ticking over -----------------------------------
+  const skids: MarkPool | null = SKID_MARK.enabled
+    ? createMarkPool(scene, "skid.mark", SKID_MARK)
+    : null;
+  const trails: MarkPool | null = LIGHT_TRAIL.enabled
+    ? createMarkPool(scene, "trail.mark", LIGHT_TRAIL)
+    : null;
+
+  // --- idle: barely there ---------------------------------------------------
   //
-  // Thin, slow and small. This one is running on every stopped car at the lights
-  // at once, so it is deliberately the cheapest of the three: a couple of
-  // particles a beat, drifting up and dying quickly.
-  const exhaust = system(scene, "fx.exhaust", dot, CAR_FX.idle.capacity);
+  // A soft, pale breath with no outline at all: small, faint, slow, and gone in
+  // a second or so. It is the one effect every stopped car is running at once, so
+  // it should sit in the background rather than draw the eye.
+  const exhaust = system(scene, "fx.exhaust", haze, idle.capacity);
   exhaust.blendMode = ParticleSystem.BLENDMODE_STANDARD;
-  grow(exhaust, 0.2, 0.75);
-  exhaust.minLifeTime = 0.5;
-  exhaust.maxLifeTime = 1.1;
-  exhaust.color1 = new Color4(0.78, 0.82, 0.92, 0.6);
-  exhaust.color2 = new Color4(0.6, 0.64, 0.75, 0.42);
-  exhaust.colorDead = new Color4(0.5, 0.54, 0.62, 0);
-  exhaust.gravity = new Vector3(0, 1.1, 0);
-  exhaust.minEmitPower = 0.5;
-  exhaust.maxEmitPower = 1.4;
-  exhaust.minAngularSpeed = -1.2;
-  exhaust.maxAngularSpeed = 1.2;
+  grow(exhaust, idle.size);
+  exhaust.color1 = new Color4(0.85, 0.87, 0.92, 0.32);
+  exhaust.color2 = new Color4(0.7, 0.73, 0.8, 0.2);
+  exhaust.colorDead = new Color4(0.6, 0.63, 0.7, 0);
+  exhaust.gravity = new Vector3(0, 0.6, 0);
+  exhaust.minLifeTime = 0.8;
+  exhaust.maxLifeTime = 1.5;
+  exhaust.minEmitPower = 0.3;
+  exhaust.maxEmitPower = 0.8;
 
-  // --- move: the car gets away -------------------------------------------
-  //
-  // Warm and low, thrown backwards hard. Dust off the road rather than smoke, so
-  // it is sandier than the other two and drops rather than climbing.
-  const launch = system(scene, "fx.launch", dot, CAR_FX.move.capacity);
-  launch.blendMode = ParticleSystem.BLENDMODE_STANDARD;
-  grow(launch, 0.35, 1.7);
-  launch.minLifeTime = 0.3;
-  launch.maxLifeTime = 0.8;
-  launch.color1 = new Color4(0.95, 0.86, 0.68, 0.85);
-  launch.color2 = new Color4(0.76, 0.68, 0.55, 0.55);
-  launch.colorDead = new Color4(0.6, 0.56, 0.5, 0);
-  launch.gravity = new Vector3(0, 0.5, 0);
-  launch.minEmitPower = 2;
-  launch.maxEmitPower = 5.5;
-  launch.minAngularSpeed = -2.5;
-  launch.maxAngularSpeed = 2.5;
+  // --- move and brake: the cartoon cloud -----------------------------------
+  const launch = cartoonSmoke(scene, "fx.launch", cloud, move.smoke);
+  const skid = cartoonSmoke(scene, "fx.brake", cloud, brake.smoke);
 
-  // --- brake: the car stops hard ------------------------------------------
-  //
-  // The loudest of the three, and the only white one. Tyre smoke is brighter and
-  // fatter than dust, and it gets shoved *forward* past the bumper, because the
-  // car is still travelling when the tyres stop turning.
-  const skid = system(scene, "fx.skid", dot, CAR_FX.brake.capacity);
-  skid.blendMode = ParticleSystem.BLENDMODE_STANDARD;
-  grow(skid, 0.3, 1.9);
-  skid.minLifeTime = 0.35;
-  skid.maxLifeTime = 0.9;
-  skid.color1 = new Color4(1, 1, 1, 0.95);
-  skid.color2 = new Color4(0.85, 0.88, 0.96, 0.6);
-  skid.colorDead = new Color4(0.78, 0.8, 0.88, 0);
-  skid.gravity = new Vector3(0, 0.9, 0);
-  skid.minEmitPower = 1.4;
-  skid.maxEmitPower = 4;
-  skid.minAngularSpeed = -2;
-  skid.maxAngularSpeed = 2;
+  const emitters = [exhaust, launch, skid].map(queued);
+  const [exhaustQ, launchQ, brakeQ] = emitters;
 
   /** A burst still owed, for the moment its clip reaches the pose it belongs to. */
-  type Delayed = {
-    due: number;
-    particles: ParticleSystem;
-    count: number;
-    at: Vector3;
-    aim: Vector3;
-    spread: number;
-  };
-
+  type Delayed = { due: number; emitter: Emitter; burst: Burst };
   const pending: Delayed[] = [];
   let clock = 0;
 
   /**
-   * Points a system at a place and a direction, then makes it emit.
+   * Nothing fires until the first real frame.
    *
-   * `aim` is where the particles are thrown and `spread` how loosely — the two
-   * direction vectors are a box around the aim, so a wide spread fans the burst
-   * out and a tight one keeps it in a jet.
+   * The traffic runs twenty-five seconds of warm-up synchronously before anything
+   * is drawn, and every car's `update` runs through all of it. Without this gate
+   * each puff from that warm-up would queue up with no frame to empty the queue,
+   * and the ribbons would be joined up to places the cars left long ago.
    */
-  const fire = (
-    particles: ParticleSystem,
-    at: Vector3,
-    aim: Vector3,
-    spread: number,
-    count: number,
-  ) => {
-    (particles.emitter as Vector3).copyFrom(at);
-    particles.direction1.set(aim.x - spread, aim.y - spread * 0.4, aim.z - spread);
-    particles.direction2.set(aim.x + spread, aim.y + spread, aim.z + spread);
-    // manualEmitCount is a request, not a total: it is consumed on the next
-    // update and reset. Two cars asking on the same frame is the one case this
-    // cannot serve, and the cost of getting it wrong is a few missing puffs.
-    particles.manualEmitCount = count;
+  let running = false;
+
+  const request = (emitter: Emitter, at: Vector3, aim: Vector3, spread: number, count: number): Burst => {
+    const burst = emitter.spare.pop() ?? { at: new Vector3(), aim: new Vector3(), spread: 0, left: 0 };
+    burst.at.copyFrom(at);
+    burst.aim.copyFrom(aim);
+    burst.spread = spread;
+    burst.left = count;
+    return burst;
   };
 
-  const later = (
-    particles: ParticleSystem,
-    delay: number,
-    at: Vector3,
-    aim: Vector3,
-    spread: number,
-    count: number,
-  ) => {
-    pending.push({
-      due: clock + delay,
-      particles,
-      count,
-      // Copied, not held: the caller reuses its vectors every frame.
-      at: at.clone(),
-      aim: aim.clone(),
-      spread,
-    });
+  const fire = (emitter: Emitter, at: Vector3, aim: Vector3, spread: number, count: number) => {
+    if (!running || count <= 0) return;
+    emitter.queue.push(request(emitter, at, aim, spread, count));
+    emitter.owed += count;
+    emitter.particles.manualEmitCount = emitter.owed;
+  };
+
+  const later = (emitter: Emitter, delay: number, at: Vector3, aim: Vector3, spread: number, count: number) => {
+    if (!running || count <= 0) return;
+    pending.push({ due: clock + delay, emitter, burst: request(emitter, at, aim, spread, count) });
   };
 
   const tick = () => {
     const dt = scene.getEngine().getDeltaTime() / 1000;
     if (dt <= 0) return;
+    running = true;
     clock += dt;
+    skids?.update(dt);
+    trails?.update(dt);
 
     for (let i = pending.length - 1; i >= 0; i--) {
       const owed = pending[i];
       if (clock < owed.due) continue;
-      fire(owed.particles, owed.at, owed.aim, owed.spread, owed.count);
+      const { emitter, burst } = owed;
+      emitter.queue.push(burst);
+      emitter.owed += burst.left;
+      emitter.particles.manualEmitCount = emitter.owed;
       pending.splice(i, 1);
     }
   };
 
-  const observer: Observer<Scene> | null = scene.onBeforeRenderObservable.add(tick);
+  // Once the frame is drawn every queued burst has either been emitted or run
+  // into the system's capacity. Either way it is done: clear the queues.
+  const flush = () => {
+    for (const emitter of emitters) {
+      for (const burst of emitter.queue) emitter.spare.push(burst);
+      emitter.queue.length = 0;
+      emitter.cursor = 0;
+      emitter.current = null;
+      emitter.owed = 0;
+    }
+  };
 
-  // Scratch vectors, so firing an effect allocates nothing.
+  const before: Observer<Scene> | null = scene.onBeforeRenderObservable.add(tick);
+  const after: Observer<Scene> | null = scene.onAfterRenderObservable.add(flush);
+
+  // Scratch, so firing an effect allocates nothing.
   const aim = new Vector3();
 
   return {
     exhaust: (at, forward) => {
-      // Straight out of the back and slightly up: the tailpipe points astern.
-      aim.set(-forward.x * 0.8, 0.9, -forward.z * 0.8);
-      fire(exhaust, at, aim, CAR_FX.idle.spread, CAR_FX.idle.puff);
+      // Out of the back, and drifting up.
+      aim.set(-forward.x * 0.6, 0.5, -forward.z * 0.6);
+      fire(exhaustQ, at, aim, idle.spread, idle.count);
     },
 
     launch: (at, forward) => {
-      // Thrown back under the car as the wheels bite.
-      aim.set(-forward.x * 3, 0.5, -forward.z * 3);
-      fire(launch, at, aim, CAR_FX.move.spread, CAR_FX.move.kick);
-      // And again as the nose comes up, by which time the car has left its own
-      // dust behind — which is exactly where this second burst stays.
-      later(launch, timing.movePeak, at, aim, CAR_FX.move.spread, CAR_FX.move.trail);
+      // Squeezed out from under the car and backwards, so it spills either side.
+      aim.set(-forward.x * 2.2, 0.35, -forward.z * 2.2);
+      fire(launchQ, at, aim, move.smoke.spread, move.smoke.count);
+      later(launchQ, timing.movePeak, at, aim, move.smoke.spread, move.smoke.after);
     },
 
-    skid: (at, forward) => {
-      // Shoved forward past the bumper: the car is still moving when the tyres
-      // stop turning.
-      aim.set(forward.x * 1.6, 0.4, forward.z * 1.6);
-      fire(skid, at, aim, CAR_FX.brake.spread, CAR_FX.brake.bite);
-      // The big one lands at the bottom of the dive, when the weight goes onto
-      // the front wheels — which is the moment the tyres would really let go.
-      later(skid, timing.brakePeak, at, aim, CAR_FX.brake.spread, CAR_FX.brake.squeal);
+    brake: (at, forward) => {
+      // The mirror of the getaway: the same cloud, thrown out ahead of the car.
+      aim.set(forward.x * 2.2, 0.35, forward.z * 2.2);
+      fire(brakeQ, at, aim, brake.smoke.spread, brake.smoke.count);
+      later(brakeQ, timing.brakePeak, at, aim, brake.smoke.spread, brake.smoke.after);
     },
+
+    trail: (handle, from, to, y, width, seconds) =>
+      running && trails ? trails.span(handle, from, to, width, seconds, y) : -1,
+
+    rubber: (handle, from, to, width, seconds) =>
+      running && skids ? skids.span(handle, from, to, width, seconds) : -1,
 
     dispose: () => {
-      scene.onBeforeRenderObservable.remove(observer);
+      scene.onBeforeRenderObservable.remove(before);
+      scene.onAfterRenderObservable.remove(after);
       pending.length = 0;
+      skids?.dispose();
+      trails?.dispose();
       exhaust.dispose();
       launch.dispose();
       skid.dispose();
-      dot.dispose();
+      cloud.dispose();
+      haze.dispose();
     },
   };
 }
 
-/**
- * Makes a system's particles swell as they age, from `from` metres to `to`.
- *
- * Size gradients *replace* `particle.size` rather than scaling it, so these are
- * absolute metres and setting `minSize`/`maxSize` alongside them would do
- * nothing at all — the gradient overwrites both on the first update. Variation
- * between particles comes from the scale range in `system` instead, which really
- * does multiply.
- *
- * It has to be a size gradient and not a *start* size gradient: the start ones
- * are measured against `targetStopDuration`, and a system that never stops has
- * none, which Babylon rejects outright at the first update.
- */
-function grow(particles: ParticleSystem, from: number, to: number): void {
-  particles.addSizeGradient(0, from);
-  particles.addSizeGradient(1, to);
+/** Wires a system's emission to a queue of bursts. See `Emitter`. */
+function queued(particles: ParticleSystem): Emitter {
+  const emitter: Emitter = { particles, queue: [], spare: [], cursor: 0, current: null, owed: 0 };
+
+  particles.startPositionFunction = (_matrix, position) => {
+    const { queue } = emitter;
+    while (emitter.cursor < queue.length && queue[emitter.cursor].left <= 0) emitter.cursor++;
+    const burst = queue[emitter.cursor] ?? queue[queue.length - 1] ?? null;
+    emitter.current = burst;
+    if (!burst) return;
+    burst.left--;
+    position.copyFrom(burst.at);
+  };
+
+  particles.startDirectionFunction = (_matrix, direction) => {
+    const burst = emitter.current;
+    if (!burst) {
+      direction.set(0, 1, 0);
+      return;
+    }
+    // A box around the aim: as wide either side as `spread`, and biased upward,
+    // so a burst fans out and lifts rather than digging into the road.
+    const { aim, spread } = burst;
+    direction.set(
+      aim.x + (Math.random() * 2 - 1) * spread,
+      aim.y + (Math.random() * 1.4 - 0.4) * spread,
+      aim.z + (Math.random() * 2 - 1) * spread,
+    );
+  };
+
+  return emitter;
 }
 
-function system(
-  scene: Scene,
-  name: string,
-  texture: DynamicTexture,
-  capacity: number,
-): ParticleSystem {
-  const particles = new ParticleSystem(name, capacity, scene);
+/** What the cartoon cloud needs from the config. */
+type SmokeRules = { capacity: number; size: { from: number; to: number }, maxPower?:number };
+
+/**
+ * The cartoon cloud: a warm, lobed, tumbling puff. Move and brake both use it,
+ * each with its own capacity and size.
+ */
+function cartoonSmoke(scene: Scene, name: string, texture: DynamicTexture, rules: SmokeRules): ParticleSystem {
+  const particles = system(scene, name, texture, rules.capacity);
+  particles.blendMode = ParticleSystem.BLENDMODE_STANDARD;
+  grow(particles, rules.size);
+  particles.color1 = new Color4(1, 0.9, 0.72, 0.95);
+  particles.color2 = new Color4(0.82, 0.73, 0.58, 0.6);
+  particles.colorDead = new Color4(0.6, 0.56, 0.5, 0);
+  particles.gravity = new Vector3(0, 0.7, 0);
+  particles.minLifeTime = 0.4;
+  particles.maxLifeTime = 1;
+  particles.minEmitPower = 2;
+  particles.maxEmitPower = rules?.maxPower ?? 4;
+  // A tumble. Cartoon smoke has a silhouette, and a silhouette that never turns
+  // stamps the same shape over and over.
+  particles.minAngularSpeed = -2.2;
+  particles.maxAngularSpeed = 2.2;
+  particles.minInitialRotation = 0;
+  particles.maxInitialRotation = Math.PI * 2;
+  return particles;
+}
+
+/**
+ * Makes a system's particles swell as they age, from `size.from` metres to
+ * `size.to` — or shrink, if `to` is the smaller.
+ *
+ * Size gradients *replace* `particle.size` rather than scaling it, so these are
+ * absolute metres and `minSize`/`maxSize` would be overwritten on the first
+ * update. Variation between particles comes from the scale range in `system`,
+ * which really does multiply. And it has to be a size gradient, not a *start*
+ * size gradient: those are measured against `targetStopDuration`, which a system
+ * that never stops does not have, and Babylon rejects that outright.
+ */
+export function grow(particles: ParticleSystem, size: { from: number; to: number }): void {
+  particles.addSizeGradient(0, size.from);
+  particles.addSizeGradient(1, size.to);
+}
+
+function system(scene: Scene, name: string, texture: DynamicTexture, capacity: number): ParticleSystem {
+  const particles = new ParticleSystem(name, Math.max(1, capacity), scene);
   particles.particleTexture = texture;
   particles.emitter = new Vector3();
   // Bursts only: emitRate stays at zero and manualEmitCount does the work.
   particles.emitRate = 0;
   particles.updateSpeed = 0.014;
-  // Per-particle variation. This one *is* a multiplier on the size, so it
-  // survives the gradient that `grow` puts on top.
-  particles.minScaleX = 0.7;
-  particles.minScaleY = 0.7;
-  particles.maxScaleX = 1.25;
-  particles.maxScaleY = 1.25;
+  particles.minScaleX = 0.65;
+  particles.minScaleY = 0.65;
+  particles.maxScaleX = 1.35;
+  particles.maxScaleY = 1.35;
   particles.start();
   return particles;
 }
 
-/** One soft round blob, shared by all three systems. Generated, not downloaded. */
-function softDot(scene: Scene): DynamicTexture {
+/**
+ * A drawn puff of smoke: a clump of overlapping round lobes, each solid almost to
+ * its rim. The outline is what the eye reads as cartoon smoke; a single soft
+ * gradient has none, and a pile of those is fog.
+ */
+function cloudTexture(scene: Scene): DynamicTexture {
+  const size = 128;
+  const texture = new DynamicTexture("fx.cloud", size, scene, true);
+  const ctx = texture.getContext() as CanvasRenderingContext2D;
+  ctx.clearRect(0, 0, size, size);
+
+  const lobes: [number, number, number][] = [
+    [0.5, 0.52, 0.3],
+    [0.29, 0.44, 0.2],
+    [0.71, 0.45, 0.22],
+    [0.4, 0.71, 0.19],
+    [0.63, 0.7, 0.17],
+    [0.52, 0.27, 0.19],
+    [0.24, 0.63, 0.14],
+  ];
+
+  for (const [cx, cy, r] of lobes) {
+    const x = cx * size;
+    const y = cy * size;
+    const radius = r * size;
+    const lobe = ctx.createRadialGradient(x, y, radius * 0.55, x, y, radius);
+    lobe.addColorStop(0, "rgba(255,255,255,1)");
+    lobe.addColorStop(0.75, "rgba(255,255,255,0.93)");
+    lobe.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = lobe;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  texture.update();
+  texture.hasAlpha = true;
+  return texture;
+}
+
+/** A soft blur with no edge anywhere, for the idle breath. */
+function hazeTexture(scene: Scene): DynamicTexture {
   const size = 64;
-  const texture = new DynamicTexture("fx.dot", size, scene, false);
+  const texture = new DynamicTexture("fx.haze", size, scene, true);
   const ctx = texture.getContext() as CanvasRenderingContext2D;
   const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  gradient.addColorStop(0, "rgba(255,255,255,1)");
-  gradient.addColorStop(0.35, "rgba(255,255,255,0.92)");
-  gradient.addColorStop(0.7, "rgba(255,255,255,0.4)");
+  gradient.addColorStop(0, "rgba(255,255,255,0.7)");
+  gradient.addColorStop(0.45, "rgba(255,255,255,0.32)");
   gradient.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, size, size);

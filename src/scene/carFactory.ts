@@ -10,8 +10,8 @@ import {
   type Mesh,
   type Scene,
 } from "@babylonjs/core";
-import { ANIM, HEADLIGHT, TRAFFIC } from "./config";
-import { clipTiming, createCarClips, IDLE_LENGTH } from "./carAnimations";
+import { ANIM, CAR_FX, HEADLIGHT, LIGHT_TRAIL, SKID_MARK, TRAFFIC } from "./config";
+import { createCarClips, IDLE_LENGTH } from "./carAnimations";
 import { createCarEffects } from "./carEffects";
 import { createHeadlights, type LampMounts } from "./carHeadlights";
 
@@ -43,13 +43,14 @@ export type CarRig = {
   width: number;
   wheelRadius: number;
   /**
-   * How far the car has settled into its idle shudder: 0 while it is moving (and
-   * the clip is paused outright), 1 once it has stopped.
+   * The per-frame tick. `idle` is how far the car has settled into its shudder —
+   * 0 while it is moving, and the clip is paused outright at that point — `dt` is
+   * the length of the frame, and `speed` is how fast the car is going.
    *
-   * `dt` is the length of the frame, which the exhaust puffs need: they go off
-   * on the beat of the shake, so something has to keep time.
+   * The effects need all three: the idle breath runs only on a settled car, and
+   * the light trail and the rubber are held on to the car as it travels.
    */
-  setIdle: (weight: number, dt: number) => void;
+  update: (idle: number, dt: number, speed: number) => void;
   /** Fires the one-shot brake dive. */
   playBrake: () => void;
   /** Fires the one-shot pull-away lift. */
@@ -97,6 +98,14 @@ const IDLE_SMOKING = 0.75;
 /** The rig's own nose, before any of the city's transforms are applied. */
 const FORWARD = new Vector3(0, 0, 1);
 
+/** Metres per second above which a car counts as moving, for the ribbons. */
+const MOVING = 0.5;
+
+/** A number somewhere in an inclusive range. */
+function between(range: { min: number; max: number }): number {
+  return range.min + Math.random() * (range.max - range.min);
+}
+
 export type CarFactory = {
   templateCount: number;
   spawn: (index: number) => CarRig;
@@ -130,7 +139,6 @@ export function createCarFactory(
   const headlights = createHeadlights(scene);
   // And the smoke: one ParticleSystem per effect for the whole road.
   const effects = createCarEffects(scene);
-  const timing = clipTiming();
   let serial = 0;
 
   const spawn = (index: number): CarRig => {
@@ -209,14 +217,14 @@ export function createCarFactory(
     }
 
     root.parent = space;
+    // Where this car's lamps are. The headlights use them, and so do most of the
+    // effects: the idle breath, the brake cloud, the rubber and the light trail
+    // are all placed off these same four markers.
+    const mounts = lampMounts(template, body.position, length, width, height);
     // The lamps hang off the bottom of the animation stack and inherit every clip
     // the car plays; the cones hang off `root`, stay flat on the road, and are
     // slid and swung to match the pose those same nodes are holding.
-    headlights?.attach(
-      root,
-      [idle, brake, move, crash],
-      lampMounts(template, body.position, length, width, height),
-    );
+    headlights?.attach(root, [idle, brake, move, crash], mounts);
 
     const idleLayer = loopingLayer(scene, `car${id}.idle`, clips.idle, idle, ANIM.idle.speed);
     const brakeLayer = oneShotLayer(scene, `car${id}.brake`, clips.brake, brake, ANIM.brake.speed);
@@ -230,36 +238,121 @@ export function createCarFactory(
       if (map?.renderList) map.renderList.push(...casters);
     }
 
-    // Where the smoke comes from, in the rig's own space: the tailpipe behind the
-    // back bumper, and the contact patch of each wheel. Measured off this car
-    // rather than assumed, so a van smokes from a van's height.
+    // Where each effect comes from, in the rig's own space.
     const radius = wheelRadius || 0.36;
-    const axle = width * 0.38;
-    const tailpipe = new Vector3(width * 0.24, radius * 0.5, -length / 2 - 0.12);
-    const rear = [
-      new Vector3(-axle, radius * 0.45, -length * 0.3),
-      new Vector3(axle, radius * 0.45, -length * 0.3),
-    ];
-    const nose = [
-      new Vector3(-axle, radius * 0.45, length * 0.3),
-      new Vector3(axle, radius * 0.45, length * 0.3),
-    ];
+    const [backLeft, backRight = backLeft] = mounts.back;
+    const [frontLeft, frontRight = frontLeft] = mounts.front;
 
-    // Scratch, reused every burst: none of this allocates once the road is built.
+    // The idle breath: one source, low down behind the middle of the car.
+    const tailpipe = Vector3.Center(backLeft, backRight);
+    tailpipe.y = radius * 0.5;
+    tailpipe.z -= 0.1;
+    // The getaway cloud, from under the car; the brake cloud, from its nose.
+    const belly = new Vector3(0, radius * 0.3, -length * 0.1);
+    const nose = Vector3.Center(frontLeft, frontRight);
+    nose.y = radius * 0.6;
+    nose.z += 0.25;
+    // The two ribbons hang off the back lamps: the light at the lamps' own
+    // height, the rubber on the ground directly beneath them.
+    const lamps = [backLeft, backRight];
+
+    // Scratch, reused every frame: none of this allocates once the road is built.
+    const matrix = { current: root.getWorldMatrix() };
     const where = new Vector3();
     const heading = new Vector3();
 
-    /** Turns a rig-local point into a world one, and reads off the car's facing. */
-    const aimAt = (local: Vector3): Vector3 => {
-      const matrix = root.computeWorldMatrix(true);
-      Vector3.TransformNormalToRef(FORWARD, matrix, heading);
+    /** Reads the car's pose once. Everything placed this frame uses it. */
+    const pose = () => {
+      matrix.current = root.computeWorldMatrix(true);
+      Vector3.TransformNormalToRef(FORWARD, matrix.current, heading);
       heading.normalize();
-      Vector3.TransformCoordinatesToRef(local, matrix, where);
+    };
+
+    /** A rig-local point, in the world, off the pose read by `pose()`. */
+    const at = (local: Vector3): Vector3 => {
+      Vector3.TransformCoordinatesToRef(local, matrix.current, where);
       return where;
     };
 
-    /** Seconds until the next cough, counted down by `setIdle`. */
-    let nextPuff = Math.random() * timing.idleBeat;
+    /**
+     * One ribbon being laid behind one lamp: the segment currently being
+     * stretched, and where that segment began.
+     */
+    type Ribbon = { handle: number; anchor: Vector3; open: boolean };
+    const ribbon = (): Ribbon => ({ handle: -1, anchor: new Vector3(), open: false });
+    const lightRibbons = [ribbon(), ribbon()];
+    const rubberRibbons = [ribbon(), ribbon()];
+
+    /** Lets go of a ribbon. What has been laid stays and fades; nothing new joins it. */
+    const close = (ribbons: Ribbon[]) => {
+      for (const r of ribbons) {
+        r.handle = -1;
+        r.open = false;
+      }
+    };
+
+    /**
+     * Pulls a ribbon out to wherever its lamp is this frame.
+     *
+     * The newest segment runs from its anchor to the lamp, so the ribbon always
+     * reaches the car. Once that segment is `every` long it is let go, and the
+     * next one starts from the same point — so the joins line up exactly.
+     */
+    const extend = (
+      r: Ribbon,
+      local: Vector3,
+      every: number,
+      lay: (handle: number, from: Vector3, to: Vector3) => number,
+    ) => {
+      const lamp = at(local);
+      let gap = Math.hypot(lamp.x - r.anchor.x, lamp.z - r.anchor.z);
+      // A fresh start, or a car that has jumped — recycled onto the start of the
+      // road, say — rather than driven there: begin again from where it is.
+      if (!r.open || gap > every * 4) {
+        r.anchor.copyFrom(lamp);
+        r.handle = -1;
+        r.open = true;
+        gap = 0;
+      }
+      const handle = lay(r.handle, r.anchor, lamp);
+      if (handle < 0) {
+        r.open = false;
+        return;
+      }
+      r.handle = handle;
+      if (gap >= every) {
+        r.anchor.copyFrom(lamp);
+        r.handle = -1;
+      }
+    };
+
+    /**
+     * This car's own draw from every range in SKID_MARK and LIGHT_TRAIL. Drawn
+     * again each time it sets off, so a car pulled out of the pool for another
+     * run does not lay the same marks as last time.
+     */
+    const look = { skidDelay: 0, skidDuration: 0, skidWidth: 0, skidSeconds: 0, lightWidth: 0, lightSeconds: 0 };
+    const draw = () => {
+      look.skidDelay = between(SKID_MARK.delay);
+      look.skidDuration = between(SKID_MARK.duration);
+      look.skidWidth = between(SKID_MARK.width);
+      look.skidSeconds = between(SKID_MARK.seconds);
+      look.lightWidth = between(LIGHT_TRAIL.width);
+      look.lightSeconds = between(LIGHT_TRAIL.seconds);
+    };
+    draw();
+
+    // Laid through `effects`, with this car's widths and lifetimes baked in.
+    const layLight = (handle: number, from: Vector3, to: Vector3) =>
+      effects ? effects.trail(handle, from, to, to.y, look.lightWidth, look.lightSeconds) : -1;
+    const layRubber = (handle: number, from: Vector3, to: Vector3) =>
+      effects ? effects.rubber(handle, from, to, look.skidWidth, look.skidSeconds) : -1;
+
+    let moving = false;
+    /** Seconds since this car last set off. */
+    let travelled = 0;
+    /** Seconds until the next idle breath. */
+    let nextBreath = Math.random() * CAR_FX.idle.every;
 
     return {
       root,
@@ -268,28 +361,58 @@ export function createCarFactory(
       length,
       width,
       wheelRadius: radius,
-      setIdle: (weight, dt) => {
+      update: (weight, dt, speed) => {
         blend(idleLayer, weight);
-        if (!effects || weight <= IDLE_SMOKING) {
-          // A car that is not properly stopped is not idling, and one that has
-          // only just begun to settle should not already be smoking.
-          nextPuff = Math.random() * timing.idleBeat;
-          return;
+        if (!effects) return;
+        pose();
+
+        // Setting off — from the lights, or onto the road from the pool.
+        const nowMoving = speed > MOVING;
+        if (nowMoving && !moving) {
+          draw();
+          travelled = 0;
         }
-        nextPuff -= dt;
-        if (nextPuff > 0) return;
-        // On the beat of the shake, not on a clock of its own: the car coughs at
-        // each extreme of the wobble, which is what makes the two look connected.
-        nextPuff += timing.idleBeat;
-        effects.exhaust(aimAt(tailpipe), heading);
+        moving = nowMoving;
+        travelled += dt;
+
+        // --- light trail: any car that is moving ------------------------------
+        if (speed > LIGHT_TRAIL.minSpeed) {
+          for (let i = 0; i < 2; i++) extend(lightRibbons[i], lamps[i], LIGHT_TRAIL.every, layLight);
+        } else {
+          close(lightRibbons);
+        }
+
+        // --- rubber: for this car's window after it sets off -----------------
+        const rubberOn =
+          moving && travelled >= look.skidDelay && travelled <= look.skidDelay + look.skidDuration;
+        if (rubberOn) {
+          for (let i = 0; i < 2; i++) extend(rubberRibbons[i], lamps[i], SKID_MARK.every, layRubber);
+        } else {
+          close(rubberRibbons);
+        }
+
+        // --- idle: a soft breath out of the back, every so often -------------
+        if (weight > IDLE_SMOKING) {
+          nextBreath -= dt;
+          if (nextBreath <= 0) {
+            nextBreath += CAR_FX.idle.every;
+            effects.exhaust(at(tailpipe), heading);
+          }
+        } else {
+          nextBreath = Math.random() * CAR_FX.idle.every;
+        }
       },
       playBrake: () => {
         fire(brakeLayer, moveLayer);
-        for (const wheel of nose) effects?.skid(aimAt(wheel), heading);
+        if (!effects) return;
+        pose();
+        effects.brake(at(nose), heading);
       },
       playMove: () => {
         fire(moveLayer, brakeLayer);
-        for (const wheel of rear) effects?.launch(aimAt(wheel), heading);
+        if (!effects) return;
+        pose();
+        effects.launch(at(belly), heading);
       },
       dispose: () => {
         idleLayer.group.dispose();
@@ -463,14 +586,17 @@ function lampMounts(
   const front = pair(mounts.front);
   const back = pair(mounts.back);
 
+  // Left first, then right, in both the marked and the measured case. The marked
+  // models put `left` on +x of the rig, so the fallback does the same — the idle
+  // puffs rely on index 0 being the left side whichever kind of car it is.
   return {
     front: front.length > 0 ? front : [
-      new Vector3(-side, height * FALLBACK_FRONT, nose),
       new Vector3(side, height * FALLBACK_FRONT, nose),
+      new Vector3(-side, height * FALLBACK_FRONT, nose),
     ],
     back: back.length > 0 ? back : [
-      new Vector3(-side, height * FALLBACK_BACK, -nose),
       new Vector3(side, height * FALLBACK_BACK, -nose),
+      new Vector3(-side, height * FALLBACK_BACK, -nose),
     ],
   };
 }
