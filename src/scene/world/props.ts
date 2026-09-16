@@ -6,7 +6,7 @@ import {
   type Scene,
   type TransformNode,
 } from "@babylonjs/core";
-import { PROPS } from "./config";
+import { PROPS } from "../config";
 
 export type RoadSpec = {
   name: string;

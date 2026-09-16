@@ -8,7 +8,7 @@ import {
   type Mesh,
 } from "@babylonjs/core";
 import { SkyMaterial } from "@babylonjs/materials/sky";
-import { CLEAR_COLOR, FOG, SKY, SUN } from "./config";
+import { CLEAR_COLOR, FOG, SKY, SUN } from "../config";
 
 export type Environment = {
   skybox: Mesh;

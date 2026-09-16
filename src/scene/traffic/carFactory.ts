@@ -1,6 +1,5 @@
 import {
   AnimationGroup,
-  Matrix,
   Quaternion,
   TransformNode,
   Vector3,
@@ -10,10 +9,13 @@ import {
   type Mesh,
   type Scene,
 } from "@babylonjs/core";
-import { ANIM, CAR_FX, HEADLIGHT, LIGHT_TRAIL, SKID_MARK, TRAFFIC } from "./config";
+import { ANIM, CAR_FX, CARS_GROUP, LIGHT_TRAIL, SKID_MARK } from "../config";
 import { createCarClips, IDLE_LENGTH } from "./carAnimations";
-import { createCarEffects } from "./carEffects";
-import { createHeadlights, type LampMounts } from "./carHeadlights";
+import { createCarEffects } from "../effects/carEffects";
+import type { Clock } from "../core/frame";
+import { between } from "../core/maths";
+import type { Disposable } from "../core/types";
+import { createHeadlights, lampMounts } from "../effects/carHeadlights";
 
 /**
  * One drivable car.
@@ -33,7 +35,7 @@ import { createHeadlights, type LampMounts } from "./carHeadlights";
  *
  * A car that is moving animates nothing here at all.
  */
-export type CarRig = {
+export type CarRig = Disposable & {
   root: TransformNode;
   /** The crash layer, written directly by the simulation. */
   crash: TransformNode;
@@ -55,7 +57,6 @@ export type CarRig = {
   playBrake: () => void;
   /** Fires the one-shot pull-away lift. */
   playMove: () => void;
-  dispose: () => void;
 };
 
 type Wheel = {
@@ -101,15 +102,9 @@ const FORWARD = new Vector3(0, 0, 1);
 /** Metres per second above which a car counts as moving, for the ribbons. */
 const MOVING = 0.5;
 
-/** A number somewhere in an inclusive range. */
-function between(range: { min: number; max: number }): number {
-  return range.min + Math.random() * (range.max - range.min);
-}
-
-export type CarFactory = {
+export type CarFactory = Disposable & {
   templateCount: number;
   spawn: (index: number) => CarRig;
-  dispose: () => void;
 };
 
 /**
@@ -119,11 +114,12 @@ export type CarFactory = {
  */
 export function createCarFactory(
   scene: Scene,
+  clock: Clock,
   space: TransformNode,
   shadows: CascadedShadowGenerator | null,
 ): CarFactory {
-  const group = scene.getNodeByName(TRAFFIC.carsGroup);
-  if (!group) throw new Error(`The .glb has no "${TRAFFIC.carsGroup}" group`);
+  const group = scene.getNodeByName(CARS_GROUP);
+  if (!group) throw new Error(`The .glb has no "${CARS_GROUP}" group`);
 
   // Direct children of the group are the 30 car roots; each carries its own
   // geometry plus the wheels and glass as children.
@@ -136,9 +132,9 @@ export function createCarFactory(
   // Built once and shared by every car's AnimationGroups.
   const clips = createCarClips();
   // Likewise the lights: one set of source meshes the whole fleet instances from.
-  const headlights = createHeadlights(scene);
+  const headlights = createHeadlights(scene, clock);
   // And the smoke: one ParticleSystem per effect for the whole road.
-  const effects = createCarEffects(scene);
+  const effects = createCarEffects(scene, clock);
   let serial = 0;
 
   const spawn = (index: number): CarRig => {
@@ -534,79 +530,3 @@ function reset(node: TransformNode): void {
   node.rotation.setAll(0);
   node.scaling.setAll(1);
 }
-
-/**
- * Where a car's lamps belong, in its rig's own space.
- *
- * Read from marker nodes in the model first: a `forntLamp` and a `backLamp`
- * (that spelling is the model's, not a slip), each with a `left` and a `right`
- * child. A lamp goes at each of the four, exactly where the marker sits — the
- * models are different shapes, and a position measured off the bumper is only
- * ever right for some of them. Nothing is added to a marker's position.
- *
- * Markers are read from the *template* rather than the clone, so it makes no
- * difference whether Babylon carries empty nodes across when a mesh is cloned.
- * `offset` is the shift the clone's body was given to centre its footprint on
- * the rig; adding it is not a fudge but the same move the bodywork made, and
- * without it the lamps would sit where the car used to be parked in the city.
- *
- * 8 of the 20 models carry markers. The rest fall back to the bounding box, so
- * the two coexist: export a car with markers and it starts using them, with
- * nothing else to change. The fallback takes its height from the car's own roof
- * rather than a number in the config — a van and a hatchback do not carry their
- * lamps at the same height, and one figure for both is wrong for at least one.
- */
-function lampMounts(
-  template: Mesh,
-  offset: Vector3,
-  length: number,
-  width: number,
-  height: number,
-): LampMounts {
-  const { mounts, lamp } = HEADLIGHT;
-  const toLocal = Matrix.Invert(template.getWorldMatrix());
-
-  const pair = (group: string): Vector3[] => {
-    const node = template.getDescendants(false, (child) => child.name === group)[0];
-    if (!node) return [];
-
-    return [mounts.left, mounts.right]
-      .map((side) => node.getDescendants(false, (child) => child.name === side)[0])
-      .filter((side): side is TransformNode => !!side)
-      .map((side) => {
-        side.computeWorldMatrix(true);
-        // Into the template's space, then into the rig's by the same shift the
-        // body was given.
-        return Vector3.TransformCoordinates(side.getAbsolutePosition(), toLocal).addInPlace(offset);
-      });
-  };
-
-  const nose = length / 2;
-  const side = (width / 2) * lamp.apart;
-  const front = pair(mounts.front);
-  const back = pair(mounts.back);
-
-  // Left first, then right, in both the marked and the measured case. The marked
-  // models put `left` on +x of the rig, so the fallback does the same — the idle
-  // puffs rely on index 0 being the left side whichever kind of car it is.
-  return {
-    front: front.length > 0 ? front : [
-      new Vector3(side, height * FALLBACK_FRONT, nose),
-      new Vector3(-side, height * FALLBACK_FRONT, nose),
-    ],
-    back: back.length > 0 ? back : [
-      new Vector3(side, height * FALLBACK_BACK, -nose),
-      new Vector3(-side, height * FALLBACK_BACK, -nose),
-    ],
-  };
-}
-
-/**
- * Where the lamps go on a car with no markers, as a fraction of its own height.
- *
- * Both figures are the average of the eight models that *are* marked: their
- * headlamps sit at 0.42 of the roof and their rear lamps a little higher, at
- * 0.53. An unmarked car therefore lands where a marked car of its shape would.
- */
-const FALLBACK_FRONT = 0.42;
-const FALLBACK_BACK = 0.53;

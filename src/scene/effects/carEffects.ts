@@ -6,8 +6,12 @@ import {
   type Observer,
   type Scene,
 } from "@babylonjs/core";
-import { CAR_FX, LIGHT_TRAIL, SKID_MARK } from "./config";
-import { clipTiming } from "./carAnimations";
+import { CAR_FX, LIGHT_TRAIL, SKID_MARK } from "../config";
+import type { Clock } from "../core/frame";
+import type { Disposable, Range } from "../core/types";
+import { radialTexture } from "../core/visuals";
+import { clipTiming } from "../traffic/carAnimations";
+import { burstSystem, grow } from "./particles";
 import { createMarkPool, type MarkPool } from "./roadMarks";
 
 /**
@@ -18,7 +22,7 @@ import { createMarkPool, type MarkPool } from "./roadMarks";
  * is most of what makes it read as smoke. The two ribbons are the opposite —
  * they are held on to the car, and the caller keeps the handles that do it.
  */
-export type CarEffects = {
+export type CarEffects = Disposable & {
   /** `idle` — a soft breath out of the back of the car. */
   exhaust: (at: Vector3, forward: Vector3) => void;
   /** `move` — the getaway cloud. */
@@ -32,7 +36,6 @@ export type CarEffects = {
   trail: (handle: number, from: Vector3, to: Vector3, y: number, width: number, seconds: number) => number;
   /** One segment of skid mark, on the tarmac. Same contract as `trail`. */
   rubber: (handle: number, from: Vector3, to: Vector3, width: number, seconds: number) => number;
-  dispose: () => void;
 };
 
 /**
@@ -75,7 +78,7 @@ type Emitter = {
  * pose peaks — the top of the lift, the bottom of the dive — worked out by
  * `clipTiming()` from the keyframes themselves.
  */
-export function createCarEffects(scene: Scene): CarEffects | null {
+export function createCarEffects(scene: Scene, clock: Clock): CarEffects | null {
   if (!CAR_FX.enabled) return null;
 
   const { idle, move, brake } = CAR_FX;
@@ -95,7 +98,7 @@ export function createCarEffects(scene: Scene): CarEffects | null {
   // A soft, pale breath with no outline at all: small, faint, slow, and gone in
   // a second or so. It is the one effect every stopped car is running at once, so
   // it should sit in the background rather than draw the eye.
-  const exhaust = system(scene, "fx.exhaust", haze, idle.capacity);
+  const exhaust = burstSystem(scene, "fx.exhaust", haze, idle.capacity);
   exhaust.blendMode = ParticleSystem.BLENDMODE_STANDARD;
   grow(exhaust, idle.size);
   exhaust.color1 = new Color4(0.85, 0.87, 0.92, 0.32);
@@ -117,7 +120,7 @@ export function createCarEffects(scene: Scene): CarEffects | null {
   /** A burst still owed, for the moment its clip reaches the pose it belongs to. */
   type Delayed = { due: number; emitter: Emitter; burst: Burst };
   const pending: Delayed[] = [];
-  let clock = 0;
+  let elapsed = 0;
 
   /**
    * Nothing fires until the first real frame.
@@ -147,20 +150,18 @@ export function createCarEffects(scene: Scene): CarEffects | null {
 
   const later = (emitter: Emitter, delay: number, at: Vector3, aim: Vector3, spread: number, count: number) => {
     if (!running || count <= 0) return;
-    pending.push({ due: clock + delay, emitter, burst: request(emitter, at, aim, spread, count) });
+    pending.push({ due: elapsed + delay, emitter, burst: request(emitter, at, aim, spread, count) });
   };
 
-  const tick = () => {
-    const dt = scene.getEngine().getDeltaTime() / 1000;
-    if (dt <= 0) return;
+  const tick = (dt: number) => {
     running = true;
-    clock += dt;
+    elapsed += dt;
     skids?.update(dt);
     trails?.update(dt);
 
     for (let i = pending.length - 1; i >= 0; i--) {
       const owed = pending[i];
-      if (clock < owed.due) continue;
+      if (elapsed < owed.due) continue;
       const { emitter, burst } = owed;
       emitter.queue.push(burst);
       emitter.owed += burst.left;
@@ -181,7 +182,9 @@ export function createCarEffects(scene: Scene): CarEffects | null {
     }
   };
 
-  const before: Observer<Scene> | null = scene.onBeforeRenderObservable.add(tick);
+  const stop = clock.each(tick);
+  // The flush has to land after the frame is drawn, which is the one thing the
+  // shared clock cannot do: it runs before the draw.
   const after: Observer<Scene> | null = scene.onAfterRenderObservable.add(flush);
 
   // Scratch, so firing an effect allocates nothing.
@@ -215,7 +218,7 @@ export function createCarEffects(scene: Scene): CarEffects | null {
       running && skids ? skids.span(handle, from, to, width, seconds) : -1,
 
     dispose: () => {
-      scene.onBeforeRenderObservable.remove(before);
+      stop();
       scene.onAfterRenderObservable.remove(after);
       pending.length = 0;
       skids?.dispose();
@@ -263,14 +266,14 @@ function queued(particles: ParticleSystem): Emitter {
 }
 
 /** What the cartoon cloud needs from the config. */
-type SmokeRules = { capacity: number; size: { from: number; to: number }, maxPower?:number };
+type SmokeRules = { capacity: number; size: Range; maxPower?: number };
 
 /**
  * The cartoon cloud: a warm, lobed, tumbling puff. Move and brake both use it,
  * each with its own capacity and size.
  */
 function cartoonSmoke(scene: Scene, name: string, texture: DynamicTexture, rules: SmokeRules): ParticleSystem {
-  const particles = system(scene, name, texture, rules.capacity);
+  const particles = burstSystem(scene, name, texture, rules.capacity);
   particles.blendMode = ParticleSystem.BLENDMODE_STANDARD;
   grow(particles, rules.size);
   particles.color1 = new Color4(1, 0.9, 0.72, 0.95);
@@ -287,37 +290,6 @@ function cartoonSmoke(scene: Scene, name: string, texture: DynamicTexture, rules
   particles.maxAngularSpeed = 2.2;
   particles.minInitialRotation = 0;
   particles.maxInitialRotation = Math.PI * 2;
-  return particles;
-}
-
-/**
- * Makes a system's particles swell as they age, from `size.from` metres to
- * `size.to` — or shrink, if `to` is the smaller.
- *
- * Size gradients *replace* `particle.size` rather than scaling it, so these are
- * absolute metres and `minSize`/`maxSize` would be overwritten on the first
- * update. Variation between particles comes from the scale range in `system`,
- * which really does multiply. And it has to be a size gradient, not a *start*
- * size gradient: those are measured against `targetStopDuration`, which a system
- * that never stops does not have, and Babylon rejects that outright.
- */
-export function grow(particles: ParticleSystem, size: { from: number; to: number }): void {
-  particles.addSizeGradient(0, size.from);
-  particles.addSizeGradient(1, size.to);
-}
-
-function system(scene: Scene, name: string, texture: DynamicTexture, capacity: number): ParticleSystem {
-  const particles = new ParticleSystem(name, Math.max(1, capacity), scene);
-  particles.particleTexture = texture;
-  particles.emitter = new Vector3();
-  // Bursts only: emitRate stays at zero and manualEmitCount does the work.
-  particles.emitRate = 0;
-  particles.updateSpeed = 0.014;
-  particles.minScaleX = 0.65;
-  particles.minScaleY = 0.65;
-  particles.maxScaleX = 1.35;
-  particles.maxScaleY = 1.35;
-  particles.start();
   return particles;
 }
 
@@ -363,16 +335,9 @@ function cloudTexture(scene: Scene): DynamicTexture {
 
 /** A soft blur with no edge anywhere, for the idle breath. */
 function hazeTexture(scene: Scene): DynamicTexture {
-  const size = 64;
-  const texture = new DynamicTexture("fx.haze", size, scene, true);
-  const ctx = texture.getContext() as CanvasRenderingContext2D;
-  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  gradient.addColorStop(0, "rgba(255,255,255,0.7)");
-  gradient.addColorStop(0.45, "rgba(255,255,255,0.32)");
-  gradient.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, size, size);
-  texture.update();
-  texture.hasAlpha = true;
-  return texture;
+  return radialTexture(scene, "fx.haze", [
+    [0, 0.7],
+    [0.45, 0.32],
+    [1, 0],
+  ]);
 }

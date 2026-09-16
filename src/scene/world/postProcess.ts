@@ -9,19 +9,20 @@ import {
   type Mesh,
   type Scene,
 } from "@babylonjs/core";
-import { POST, QUALITY } from "./config";
+import { POST, QUALITY } from "../config";
+import type { Clock } from "../core/frame";
+import type { Disposable } from "../core/types";
 
-export type PostFx = {
+export type PostFx = Disposable & {
   pipeline: DefaultRenderingPipeline;
   ssao: SSAO2RenderingPipeline | null;
   /** Opts a mesh into the glow layer when it is restricted to the signal. */
   addGlowing: (mesh: Mesh) => void;
   setDepthOfField: (on: boolean) => void;
   setAmbientOcclusion: (on: boolean) => void;
-  dispose: () => void;
 };
 
-export function createPostProcess(scene: Scene, camera: ArcRotateCamera): PostFx {
+export function createPostProcess(scene: Scene, clock: Clock, camera: ArcRotateCamera): PostFx {
   // Contact darkening, when it is switched on: SSAO runs before the beauty
   // pipeline so bloom and grading see an already-grounded image. It costs a
   // whole extra geometry pass, so QUALITY decides whether it is built at all.
@@ -101,10 +102,11 @@ export function createPostProcess(scene: Scene, camera: ArcRotateCamera): PostFx
   ip.vignetteColor = new Color4(0.05, 0.06, 0.12, 0);
 
   // Keep the junction pin-sharp however far the player dollies out.
-  const keepFocus = () => {
-    pipeline.depthOfField.focusDistance = camera.radius * 1000;
-  };
-  if (QUALITY.depthOfField) scene.onBeforeRenderObservable.add(keepFocus);
+  const stopFocus = QUALITY.depthOfField
+    ? clock.each(() => {
+        pipeline.depthOfField.focusDistance = camera.radius * 1000;
+      })
+    : null;
 
   return {
     pipeline,
@@ -123,7 +125,7 @@ export function createPostProcess(scene: Scene, camera: ArcRotateCamera): PostFx
       else manager.detachCamerasFromRenderPipeline("ssao", camera);
     },
     dispose: () => {
-      scene.onBeforeRenderObservable.removeCallback(keepFocus);
+      stopFocus?.();
       ssao?.dispose();
       pipeline.dispose();
     },

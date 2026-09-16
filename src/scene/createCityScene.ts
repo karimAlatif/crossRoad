@@ -7,19 +7,21 @@ import {
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF/2.0";
 
-import { createCamera, playIntro } from "./camera";
-import { loadCity, type LoadProgress } from "./city";
-import { createEnvironment } from "./environment";
-import { createLighting, registerShadowCasters } from "./lighting";
+import { createCamera, playIntro } from "./world/camera";
+import { loadCity, type LoadProgress } from "./world/city";
+import { createEnvironment } from "./world/environment";
+import { createLighting, registerShadowCasters } from "./world/lighting";
 import { QUALITY } from "./config";
-import { createPostProcess } from "./postProcess";
-import { createSound } from "./sound";
-import { readProps } from "./props";
-import { createStreetLamps } from "./streetLamps";
-import { createTraffic, type CrashEvent } from "./traffic";
-import { createTrafficLight } from "./trafficLight";
+import { createClock } from "./core/frame";
+import type { Disposable } from "./core/types";
+import { createPostProcess } from "./world/postProcess";
+import { createSound } from "./audio/sound";
+import { readProps } from "./world/props";
+import { createStreetLamps } from "./world/streetLamps";
+import { createTraffic, type CrashEvent } from "./traffic/traffic";
+import { createTrafficLight } from "./world/trafficLight";
 
-export type CityScene = {
+export type CityScene = Disposable & {
   engine: Engine;
   scene: Scene;
   camera: ArcRotateCamera;
@@ -27,14 +29,10 @@ export type CityScene = {
   onCrash: (handler: (event: CrashEvent) => void) => void;
   isGreen: () => boolean;
   toggleLight: () => void;
-  dispose: () => void;
 };
 
 /** Aim at road level: the junction is the subject, not the skyline. */
 const TARGET_LIFT = 0;
-
-/** A long frame (an alt-tab, a GC pause) must not teleport the traffic. */
-const MAX_STEP = 1 / 20;
 
 export async function createCityScene(
   canvas: HTMLCanvasElement,
@@ -56,6 +54,10 @@ export async function createCityScene(
   scene.skipPointerMovePicking = true;
   scene.blockMaterialDirtyMechanism = true;
 
+  // One heartbeat for the whole scene: every per-frame system hangs off this
+  // rather than registering an observer of its own.
+  const clock = createClock(scene);
+
   // Started first so the sound files download alongside the city rather than
   // after it. Nothing plays until the player's first click.
   const sound = createSound(scene);
@@ -76,7 +78,7 @@ export async function createCityScene(
   // The authored markers drive everything below: where the signal stands, and
   // where each road starts, ends and meets the junction.
   onProgress(1, "Lighting the street");
-  const lamps = createStreetLamps(scene);
+  const lamps = createStreetLamps(scene, clock);
 
   onProgress(1, "Reading the junction");
   const props = readProps(scene);
@@ -88,13 +90,13 @@ export async function createCityScene(
   );
 
   onProgress(1, "Filling the roads");
-  const traffic = createTraffic(scene, props.space, props.roads, lighting.shadows);
+  const traffic = createTraffic(scene, clock, props.space, props.roads, lighting.shadows);
   traffic.onSetOff.add((at) => sound.play("move", at));
   traffic.onBrake.add((at) => sound.play("brake", at));
   traffic.onCrash.add((event) => sound.play("accident", event.at));
 
   onProgress(1, "Lighting the block");
-  const postFx = createPostProcess(scene, camera);
+  const postFx = createPostProcess(scene, clock, camera);
   for (const mesh of light.glowing) postFx.addGlowing(mesh);
   scene.blockMaterialDirtyMechanism = false;
 
@@ -106,18 +108,18 @@ export async function createCityScene(
   // Now that the sky shader exists, capture it into the IBL cube for real.
   environment.bake();
 
+  // The city never changes after this: freezing its materials skips the
+  // per-draw check for whether each one still needs recompiling.
+  for (const material of city.container.materials) material.freeze();
+
   // One click anywhere works the signal. POINTERTAP only fires when the pointer
   // did not travel, so orbiting the camera never trips it.
   const pointer = scene.onPointerObservable.add((info) => {
     if (info.type === PointerEventTypes.POINTERTAP) light.toggle();
   });
 
-  let elapsed = 0;
-  const tick = scene.onBeforeRenderObservable.add(() => {
-    const dt = Math.min(engine.getDeltaTime() / 1000, MAX_STEP);
-    // Two frames can share a timestamp; there is nothing to advance.
-    if (dt <= 0) return;
-    elapsed += dt;
+  // Last in line, so the traffic has already moved everything this frame.
+  clock.each((dt, elapsed) => {
     light.update(dt, elapsed);
     traffic.update(dt, light.isGreen());
   });
@@ -140,7 +142,7 @@ export async function createCityScene(
     dispose: () => {
       window.removeEventListener("resize", onResize);
       engine.stopRenderLoop(render);
-      scene.onBeforeRenderObservable.remove(tick);
+      clock.dispose();
       scene.onPointerObservable.remove(pointer);
       lamps?.dispose();
       traffic.dispose();

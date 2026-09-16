@@ -6,7 +6,7 @@ import {
   Vector3,
   type Scene,
 } from "@babylonjs/core";
-import { CAMERA } from "./config";
+import { CAMERA } from "../config";
 
 export function createCamera(scene: Scene, target: Vector3): ArcRotateCamera {
   const camera = new ArcRotateCamera(
@@ -42,7 +42,7 @@ export function createCamera(scene: Scene, target: Vector3): ArcRotateCamera {
 }
 
 /** Eases the camera from a wide establishing shot down into the game view. */
-export function playIntro(camera: ArcRotateCamera, onDone?: () => void): void {
+export function playIntro(camera: ArcRotateCamera): void {
   const ease = new CubicEase();
   ease.setEasingMode(EasingFunction.EASINGMODE_EASEINOUT);
 
@@ -84,32 +84,5 @@ export function playIntro(camera: ArcRotateCamera, onDone?: () => void): void {
   camera.getScene().beginAnimation(camera, 0, frames, false, 1, () => {
     camera.lowerBetaLimit = lowerBeta;
     camera.upperRadiusLimit = upperRadius;
-    onDone?.();
   });
-}
-
-/** Returns the camera to the authored game framing. */
-export function resetView(camera: ArcRotateCamera, target: Vector3): void {
-  const ease = new CubicEase();
-  ease.setEasingMode(EasingFunction.EASINGMODE_EASEINOUT);
-  camera.setTarget(target.clone());
-
-  const ride = (property: string, to: number) =>
-    Animation.CreateAndStartAnimation(
-      `reset_${property}`,
-      camera,
-      property,
-      60,
-      42,
-      (camera as unknown as Record<string, number>)[property],
-      to,
-      Animation.ANIMATIONLOOPMODE_CONSTANT,
-      ease,
-    );
-
-  // Take the short way round the circle rather than unwinding a full turn.
-  const alpha = CAMERA.alpha + Math.round((camera.alpha - CAMERA.alpha) / (Math.PI * 2)) * Math.PI * 2;
-  ride("alpha", alpha);
-  ride("beta", CAMERA.beta);
-  ride("radius", CAMERA.radius);
 }

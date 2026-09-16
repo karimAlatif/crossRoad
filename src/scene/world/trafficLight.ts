@@ -1,24 +1,24 @@
 import {
   Color3,
-  DynamicTexture,
   MeshBuilder,
   PointLight,
   StandardMaterial,
-  Texture,
   TransformNode,
   Vector3,
+  type DynamicTexture,
   type Mesh,
   type Scene,
 } from "@babylonjs/core";
-import { LIGHT } from "./config";
+import { LIGHT } from "../config";
+import type { Disposable } from "../core/types";
+import { radialTexture, unlit } from "../core/visuals";
 
-export type TrafficLight = {
+export type TrafficLight = Disposable & {
   /** The lamps and halos, for opting into a restricted glow layer. */
   glowing: Mesh[];
   isGreen: () => boolean;
   toggle: () => void;
   update: (dt: number, elapsed: number) => void;
-  dispose: () => void;
 };
 
 type Lamp = {
@@ -37,7 +37,7 @@ export function createTrafficLight(scene: Scene, position: Vector3): TrafficLigh
   const root = new TransformNode("trafficLight", scene);
   root.position.copyFrom(position);
 
-  const dark = flat(scene, "trafficLight.darkMat", new Color3(0.045, 0.05, 0.075));
+  const dark = plastic(scene, "trafficLight.darkMat", new Color3(0.045, 0.05, 0.075));
 
   const pole = MeshBuilder.CreateCylinder(
     "trafficLight.pole",
@@ -141,11 +141,12 @@ function lamp(
   box.position.set(0, y, -LIGHT.head.depth * 0.7);
   box.isPickable = false;
 
-  const material = new StandardMaterial(`trafficLight.${name}Mat`, scene);
-  material.disableLighting = true;
-  material.diffuseColor = Color3.Black();
-  material.specularColor = Color3.Black();
-  material.emissiveColor = colour;
+  // Not frozen: both of these change colour every frame as the lamp breathes.
+  const material = unlit(scene, `trafficLight.${name}Mat`, {
+    colour: colour.clone(),
+    depthWrite: true,
+    frozen: false,
+  });
   box.material = material;
 
   // A stubby cartoon visor, so the head reads as a signal and not two stickers.
@@ -166,31 +167,30 @@ function lamp(
   halo.position.set(0, y, -LIGHT.head.depth * 1.25);
   halo.isPickable = false;
 
-  const haloMaterial = new StandardMaterial(`trafficLight.${name}HaloMat`, scene);
-  haloMaterial.diffuseColor = Color3.Black();
-  haloMaterial.specularColor = Color3.Black();
-  haloMaterial.disableLighting = true;
-  haloMaterial.emissiveTexture = glow;
-  haloMaterial.opacityTexture = glow;
-  haloMaterial.alphaMode = 1; // additive
-  haloMaterial.backFaceCulling = false;
-  haloMaterial.disableDepthWrite = true;
+  const haloMaterial = unlit(scene, `trafficLight.${name}HaloMat`, {
+    texture: glow,
+    glow: true,
+    frozen: false,
+  });
   halo.material = haloMaterial;
 
   return { box, material, halo, haloMaterial, colour };
 }
 
 function setLamp(lamp: Lamp, on: boolean, breathe: number, pop: number): void {
-  lamp.material.emissiveColor = lamp.colour.scale(on ? LIGHT.onGlow * breathe : LIGHT.offGlow);
+  // Written into the colours the materials already hold, rather than replacing
+  // them: this runs every frame, and a new Color3 twice a frame is litter.
+  lamp.colour.scaleToRef(on ? LIGHT.onGlow * breathe : LIGHT.offGlow, lamp.material.emissiveColor);
 
   // The dark lamp has no halo at all; the lit one flares on each switch.
   const strength = on ? 0.5 * breathe + pop * 0.45 : 0;
-  lamp.haloMaterial.emissiveColor = lamp.colour.scale(strength);
+  lamp.colour.scaleToRef(strength, lamp.haloMaterial.emissiveColor);
   lamp.halo.isVisible = on;
   lamp.halo.scaling.setAll(0.85 + pop * 0.4);
 }
 
-function flat(scene: Scene, name: string, colour: Color3): StandardMaterial {
+/** Dark moulded plastic: the only lit material in the signal. */
+function plastic(scene: Scene, name: string, colour: Color3): StandardMaterial {
   const material = new StandardMaterial(name, scene);
   material.diffuseColor = colour;
   material.specularColor = new Color3(0.1, 0.1, 0.12);
@@ -199,18 +199,16 @@ function flat(scene: Scene, name: string, colour: Color3): StandardMaterial {
 
 /** Soft radial falloff, generated rather than downloaded. */
 function softDot(scene: Scene): DynamicTexture {
-  const size = 128;
-  const texture = new DynamicTexture("trafficLight.glow", size, scene, false);
-  const ctx = texture.getContext() as CanvasRenderingContext2D;
-  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  gradient.addColorStop(0, "rgba(255,255,255,1)");
-  gradient.addColorStop(0.3, "rgba(255,255,255,0.38)");
-  gradient.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, size, size);
-  texture.update();
-  texture.hasAlpha = true;
-  texture.wrapU = Texture.CLAMP_ADDRESSMODE;
-  texture.wrapV = Texture.CLAMP_ADDRESSMODE;
-  return texture;
+  return radialTexture(
+    scene,
+    "trafficLight.glow",
+    [
+      [0, 1],
+      [0.3, 0.38],
+      [1, 0],
+    ],
+    undefined,
+    1,
+    128,
+  );
 }

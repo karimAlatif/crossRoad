@@ -1,14 +1,15 @@
 import {
-  Color3,
   DynamicTexture,
   MeshBuilder,
-  StandardMaterial,
   Texture,
   type AbstractMesh,
+  type Color3,
   type Scene,
   type Vector3,
 } from "@babylonjs/core";
-import { additive, channel } from "./carHeadlights";
+import { byte } from "../core/maths";
+import type { Disposable } from "../core/types";
+import { unlit } from "../core/visuals";
 
 /** What a pool needs to know to draw and age one kind of ribbon. */
 export type MarkRules = {
@@ -25,7 +26,7 @@ export type MarkRules = {
   glowing: boolean;
 };
 
-export type MarkPool = {
+export type MarkPool = Disposable & {
   /**
    * Lays or updates one segment of a ribbon, running from `from` to `to`.
    *
@@ -52,7 +53,6 @@ export type MarkPool = {
   ) => number;
   /** Ages every segment. Called once a frame. */
   update: (dt: number) => void;
-  dispose: () => void;
 };
 
 /**
@@ -81,9 +81,8 @@ const OVERLAP = 0.04;
  */
 export function createMarkPool(scene: Scene, name: string, rules: MarkRules): MarkPool {
   const texture = strip(scene, `${name}.tex`, rules);
-  const material = rules.glowing
-    ? additive(scene, `${name}.mat`, texture)
-    : rubber(scene, `${name}.mat`, texture);
+  // Light adds to the road; rubber covers it. Otherwise they are the same thing.
+  const material = unlit(scene, `${name}.mat`, { texture, glow: rules.glowing });
 
   // Unit size: each segment scales it to its own length and width.
   const source = MeshBuilder.CreatePlane(name, { width: 1, height: 1 }, scene);
@@ -170,22 +169,6 @@ export function createMarkPool(scene: Scene, name: string, rules: MarkRules): Ma
   };
 }
 
-/** Unlit, alpha-blended, and dark: rubber covers the road rather than lighting it. */
-function rubber(scene: Scene, name: string, texture: Texture): StandardMaterial {
-  const material = new StandardMaterial(name, scene);
-  material.diffuseColor = Color3.Black();
-  material.specularColor = Color3.Black();
-  material.emissiveColor = Color3.Black();
-  material.disableLighting = true;
-  material.opacityTexture = texture;
-  material.backFaceCulling = false;
-  // The road already owns this depth. Writing it again makes two marks laid in
-  // the same place flicker against each other.
-  material.disableDepthWrite = true;
-  material.freeze();
-  return material;
-}
-
 /**
  * One segment: full down the middle, soft along both edges.
  *
@@ -206,14 +189,14 @@ function strip(scene: Scene, name: string, rules: MarkRules): DynamicTexture {
   const image = ctx.createImageData(size, size);
   const data = image.data;
 
-  const red = channel(rules.colour.r, 1);
-  const green = channel(rules.colour.g, 1);
-  const blue = channel(rules.colour.b, 1);
+  const red = byte(rules.colour.r);
+  const green = byte(rules.colour.g);
+  const blue = byte(rules.colour.b);
 
   for (let x = 0; x < size; x++) {
     const u = Math.abs(x / (size - 1) - 0.5) * 2;
     const across = Math.max(0, 1 - u * u * u);
-    const alpha = Math.round(Math.max(0, Math.min(1, across * rules.strength)) * 255);
+    const alpha = byte(across, rules.strength);
 
     for (let y = 0; y < size; y++) {
       const i = (y * size + x) * 4;

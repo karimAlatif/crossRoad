@@ -1,0 +1,191 @@
+# AI context — blueMino
+
+Working notes for an AI agent picking this project up. Dense on purpose: the
+invariants and the traps, not a tutorial. For how the game works, read
+`HOW_IT_WORKS.md` — that one is written for the project's owner.
+
+## What this is
+
+A browser scene, not an app: a Babylon.js night-time city crossroad where the
+player clicks anywhere to work the traffic light. React only mounts the canvas
+and shows a loading overlay. There is no UI by design — the owner asked for it
+to be removed early on, twice. Do not add HUD elements unless asked.
+
+- Babylon.js 9.26, Vite 8, React 19, TypeScript 5.9 (strict, `noUnusedLocals`).
+- `npm run dev` / `npm run build`. `npx tsc --noEmit` typechecks.
+- The model is Synty POLYGON City, exported from Unity.
+
+## Layout
+
+```
+src/scene/
+  config.ts            every tunable in the project, one file
+  createCityScene.ts   composition root: builds everything, wires it, returns the API
+  core/                shared by everything
+    types.ts           Range, Disposable
+    maths.ts           clamp01, between, mid, moveTowards, byte
+    frame.ts           createClock — THE per-frame heartbeat
+    visuals.ts         unlit materials, radialTexture, plane/planeSource instancing
+  world/               things that do not move
+    city.ts            loads the .glb, revives emissives, freezes statics
+    props.ts           reads the authored marker hierarchy
+    camera.ts          locked 3/4 view + intro fly-in
+    lighting.ts        sun, fill, cascaded shadows
+    environment.ts     sky dome + baked IBL
+    postProcess.ts     bloom, tone mapping, DoF, glow layer, SSAO
+    trafficLight.ts    the signal: geometry, lamps, breathing glow
+    streetLamps.ts     lamp-post glows, instanced
+  traffic/
+    road.ts            lane/wave/rules model + spawn arithmetic (pure)
+    collisions.ts      footprint + separating-axis test (pure)
+    traffic.ts         the simulation: drive, place, collide, crash, warm-up
+    carFactory.ts      the car rig, animation layers, effect emission points
+    carAnimations.ts   the three keyframe clips + clipTiming()
+  effects/
+    carEffects.ts      idle/move/brake smoke; owns the two ribbon pools
+    roadMarks.ts       generic stretched-ribbon pool (skid marks, light trails)
+    carHeadlights.ts   beams, lamps, and lampMounts() for every car
+    crashEffects.ts    flash, sparks, smoke
+    particles.ts       burstSystem + grow, shared by car and crash effects
+    flicker.ts         faulty-light stutter, shared by cars and street lamps
+  audio/sound.ts       Web Audio: theme, move, brake, accident
+public/models|sounds   the web root; `/models/scene.glb`, `/sounds/*`
+```
+
+## The frame
+
+One `onBeforeRenderObservable` observer exists: `core/frame.ts`. Everything
+per-frame subscribes through `clock.each(fn)` and is handed a **clamped** `dt`
+(max 1/20 s) and `elapsed`. Subscription order is execution order. The traffic
+subscribes late (in `createCityScene`) so systems that read car positions have
+already run against the previous frame's placement — that is fine and
+intentional; a frame of lag is invisible at these speeds.
+
+The single exception is `carEffects`, which also holds an
+`onAfterRenderObservable` callback to flush its burst queues once the frame is
+drawn. That cannot move to the clock, which runs before the draw.
+
+## Invariants and traps
+
+These were each found the hard way. Breaking one usually looks like "the thing
+is invisible" rather than an error.
+
+1. **The glTF root mirrors the world.** Babylon's loader parents everything under
+   `__root__` with scale (1, 1, −1) plus a 180° Y rotation. Consequences:
+   - **Never billboard through it.** Billboarding writes the world matrix
+     directly and cannot express the mirror; it put the car lamps at y = −1.5,
+     under the road. Every glow plane uses a fixed rotation instead.
+   - Positions read from the model must be transformed, not assumed.
+2. **StandardMaterial *adds* its emissive texture to `emissiveColor`** and clamps
+   the sum. A white texture therefore pins the result to white whatever colour
+   the material is given. Every generated texture bakes its colour into its own
+   pixels (`byte()` + `radialTexture`), and `emissiveColor` stays black. This is
+   `unlit()` in `core/visuals.ts` — use it, do not hand-roll a material.
+3. **A frozen material stops re-uploading uniforms.** Anything whose colour
+   changes at runtime must pass `frozen: false` — only the signal's lamps do.
+4. **`DynamicTexture` defaults to invertY**, so canvas row 0 lands at V = 1. The
+   headlight cone is written with `t = 1 - y / (size - 1)` for exactly this
+   reason; removing the flip builds the cone backwards.
+5. **Particle size gradients *replace* `particle.size`.** `minSize`/`maxSize` are
+   overwritten on the first update, so gradients are absolute metres.
+   `addStartSizeGradient` is a different thing and needs `targetStopDuration`;
+   using it on a never-stopping system throws and takes the whole scene load
+   down with it.
+6. **`manualEmitCount` holds one burst per frame.** A second car setting it the
+   same frame overwrites the first — which silently meant only one car per frame
+   got smoke. `carEffects` fixes this with a queue plus Babylon's
+   `startPositionFunction`/`startDirectionFunction` hooks; Babylon creates a
+   particle's position *before* its direction, so position picks the burst and
+   direction reuses it. Do not "simplify" this back.
+7. **Instances own almost nothing.** `receiveShadows`, `applyFog` and materials
+   belong to the source mesh; setting them per instance is ignored and warns once
+   per instance. `core/visuals.ts#plane` already handles this.
+8. **The traffic warms up for 25 simulated seconds synchronously** before the
+   first frame, so the junction opens busy. Nothing "live" may happen during it:
+   `traffic` gates clips on a `live` flag and `carEffects` gates everything on
+   `running` until the first real frame. Without that gate, a warm-up's worth of
+   queued bursts fires at once on frame 1, in places the cars left long ago.
+9. **Cars are pooled.** A car that reaches the end of a road is disabled and
+   reused at the start — often in the same frame. Anything per-trip (random
+   widths, skid windows, ribbon anchors) must reset on the "starts moving" edge,
+   and anything measuring a car over time must treat a large position jump as a
+   new trip, not a fast one.
+10. **The front lamp marker is spelled `forntLamp` in the .glb.** Not a typo in
+    the code. 8 of 20 car models carry `forntLamp`/`backLamp`, each with `left`
+    and `right`; the rest fall back to bounding-box estimates. Index 0 is always
+    the left side, in both paths.
+11. **Audio needs a user gesture.** Files are fetched at load, decoded on the
+    first click. Calls before that are dropped, not queued.
+
+## Verifying changes
+
+There is no test suite. The working method for this project is to **measure in a
+real browser**, and it has repeatedly overturned what a screenshot seemed to
+show. The recipe:
+
+1. Temporarily expose the scene: add to `App.tsx`, after `sceneRef.current = city`:
+   `(window as unknown as Record<string, unknown>).__city = city; // TEMP PROBE`
+   **Always revert this** with `git checkout -- src/App.tsx` when done.
+2. `npm run build`, then `npx vite preview --port 4179 --strictPort`.
+3. Launch headless Chrome with `--remote-debugging-port=<port>
+   --headless=new --use-gl=swiftshader --enable-unsafe-swiftshader
+   --window-size=1280,720 --user-data-dir=<temp>`.
+4. Drive it over CDP from a Node script (Node 22 has a built-in `WebSocket`):
+   `Runtime.evaluate` to probe, `Page.captureScreenshot` for pictures,
+   `Input.dispatchMouseEvent` for a real user gesture (audio unlock).
+
+Pitfalls in that harness, all of which have produced false results here:
+
+- **SwiftShader takes ~1 s per frame** and blocks the page's main thread, so any
+  `setTimeout`-based timing in the page is meaningless while the render loop
+  runs. `engine.stopRenderLoop()` first.
+- **To step the simulation without drawing**, do all of:
+  `scene._frameId++; scene.animate(); scene.onBeforeRenderObservable.notifyObservers(scene);
+  for (const p of scene.particleSystems) p.animate(); scene.onAfterRenderObservable.notifyObservers(scene);`
+  Without `_frameId++`, `ParticleSystem.animate()` returns immediately and no
+  particle is ever born. Set `engine.getDeltaTime = () => 16` and
+  `scene.useConstantAnimationDeltaTime = true` for a fixed 60 Hz step.
+- **To freeze the scene for an A/B screenshot**, set `getDeltaTime = () => 0`
+  and `scene.animationsEnabled = false`; otherwise the second capture differs by
+  a frame of traffic and the diff is meaningless.
+- **`Runtime.enable` replays console messages from before the navigation.** A
+  stale warning looks like a live one; navigate to `about:blank` first.
+- Particles are often simply **off-screen** — project them before concluding
+  they are invisible.
+
+## Performance
+
+Measured by stepping the sim 1200 frames with no rendering and timing it:
+
+| | |
+|---|---|
+| CPU per frame (sim + effects) | **0.11 ms** |
+| draw calls | ~940 |
+| active meshes | ~1200 |
+| real lights | 3 |
+| particle systems | 6 |
+
+What keeps it there, and must not be casually undone:
+
+- The .glb arrives **already instanced** (384 meshes, 1188 instances). Merging it
+  destroys that — this was tried and reverted.
+- Every glow is **additive geometry, not a light**. A Babylon light costs per
+  *material*, so thirty headlights would recompile every shader in the city.
+- Each effect is **one shared system or pool**: 3 particle systems for the cars,
+  2 ribbon pools, one instanced source per glow kind.
+- City meshes are frozen (`freezeWorldMatrix`, `doNotSyncBoundingInfo`) and their
+  materials are frozen after `whenReadyAsync`.
+- The pools are **rings**: `SKID_MARK.pool`, `LIGHT_TRAIL.pool` bound the road's
+  memory and draw cost no matter how long the game runs.
+
+## Working with the owner
+
+- **`config.ts` is theirs.** They tune it live, mid-session. Re-read it before
+  editing and preserve their values; change structure, not numbers, unless the
+  change is the point.
+- They have reverted edits to `carAnimations.ts` clip shapes twice. Treat the
+  keyframes as theirs.
+- Comments explain *why*, in British spelling, and are expected to carry the
+  reasoning above. Keep them.
+- When something looks wrong, they want the cause found and stated plainly, not
+  patched over.

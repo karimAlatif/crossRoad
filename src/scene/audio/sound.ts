@@ -1,10 +1,11 @@
 import { Vector3, type Scene } from "@babylonjs/core";
-import { SOUND } from "./config";
+import { SOUND } from "../config";
+import type { Disposable, Range } from "../core/types";
 
 /** The one-shot effects. The theme is separate: it loops on its own. */
 export type SoundName = "move" | "brake" | "accident";
 
-export type Sound = {
+export type Sound = Disposable & {
   /**
    * Plays an effect. `at` is where it happened, in world space; leave it out for
    * a sound that has no place, and it plays centred at full volume.
@@ -17,7 +18,6 @@ export type Sound = {
   play: (name: SoundName, at?: Vector3) => void;
   /** Counters for tuning: voices playing, bursts merged, voices cut short. */
   stats: () => SoundStats;
-  dispose: () => void;
 };
 
 export type SoundStats = {
@@ -35,7 +35,7 @@ type Effect = {
   volume: number;
   maxVoices: number;
   merge: number;
-  pitch: { min: number; max: number };
+  pitch: Range;
   duck?: { amount: number; seconds: number };
 };
 

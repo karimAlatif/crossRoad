@@ -165,8 +165,6 @@ export const PROPS = {
  * ROAD_ONE and ROAD_TWO below.
  */
 export const TRAFFIC = {
-  /** The hidden `Cars` group doubles as the model library the traffic clones. */
-  carsGroup: "Cars",
   /**
    * How far each row sits either side of its road's centre line — shared, because
    * both roads are painted the same width. 2.5 is where the authored parked cars
@@ -254,7 +252,7 @@ export const CRASH = {
    *   count     sparks per impact
    *   size      how big a spark starts and ends, in metres
    */
-  sparks: { capacity: 800, count: 45, size: { from: 8, to: 16 } },
+  sparks: { capacity: 800, count: 45, size: { min: 8, max: 16 } },
 };
 
 export const LIGHT = {
@@ -389,7 +387,7 @@ export const CAR_FX = {
    *   size    how big a particle starts and how far it has spread when it dies
    *   spread  how loosely it drifts
    */
-  idle: { capacity: 200, every: 0.35, count: 2, size: { from: 0.15, to: 0.8 }, spread: 0.15 },
+  idle: { capacity: 200, every: 0.35, count: 2, size: { min: 0.15, max: 0.8 }, spread: 0.15 },
 
   /**
    * `move` — the getaway cloud, out from under a car that sets off.
@@ -401,7 +399,7 @@ export const CAR_FX = {
    *   after   more lobes at the top of the nose lift
    */
   move: {
-    smoke: { capacity: 40, count: 10, after: 20, size: { from: .8, to: 1.5 }, spread: 1.3 },
+    smoke: { capacity: 40, count: 10, after: 20, size: { min: .8, max: 1.5 }, spread: 1.3 },
   },
 
   /**
@@ -412,7 +410,7 @@ export const CAR_FX = {
    *   after   more lobes at the bottom of the dive
    */
   brake: {
-    smoke: { capacity: 20, count: 2, after: .25, size: { from: 1.5, to: 2 }, spread: 1 , maxPower: 2},
+    smoke: { capacity: 20, count: 2, after: .25, size: { min: 1.5, max: 2 }, spread: 1 , maxPower: 2},
   },
 };
 

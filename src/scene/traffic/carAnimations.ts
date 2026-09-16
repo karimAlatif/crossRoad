@@ -1,5 +1,5 @@
 import { Animation, EasingFunction, SineEase } from "@babylonjs/core";
-import { ANIM } from "./config";
+import { ANIM } from "../config";
 
 /**
  * The three keyframe clips a car can play: shuddering while it waits, diving on

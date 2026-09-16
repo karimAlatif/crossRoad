@@ -1,16 +1,20 @@
 import {
-  Color3,
   DynamicTexture,
-  Mesh,
-  MeshBuilder,
-  StandardMaterial,
+  Matrix,
   Texture,
   TransformNode,
   Vector3,
   type AbstractMesh,
+  type Color3,
+  type Mesh,
   type Scene,
+  type StandardMaterial,
 } from "@babylonjs/core";
-import { HEADLIGHT } from "./config";
+import { HEADLIGHT } from "../config";
+import type { Clock } from "../core/frame";
+import { byte } from "../core/maths";
+import type { Disposable } from "../core/types";
+import { plane, planeSource, radialTexture, unlit, type PlaneSource } from "../core/visuals";
 import { createFlicker } from "./flicker";
 
 /**
@@ -24,7 +28,7 @@ export type LampMounts = {
   back: Vector3[];
 };
 
-export type Headlights = {
+export type Headlights = Disposable & {
   /**
    * Hangs a set of lights on one car.
    *
@@ -33,11 +37,7 @@ export type Headlights = {
    * hang off the last of them, and the beams read their pose off all of them.
    */
   attach: (road: TransformNode, anim: TransformNode[], mounts: LampMounts) => void;
-  dispose: () => void;
 };
-
-/** Holds the first mesh of its kind; everything after it is an instance. */
-type Source = { mesh: Mesh | null };
 
 /** One car's beams, and the animated nodes whose pose they answer to. */
 type BeamRig = { node: TransformNode; anim: TransformNode[] };
@@ -74,34 +74,32 @@ type BeamRig = { node: TransformNode; anim: TransformNode[] };
  * nothing extra to draw — a faulty lamp is simply left out of its instance
  * buffer for the frames it is dark.
  */
-export function createHeadlights(scene: Scene): Headlights | null {
+export function createHeadlights(scene: Scene, clock: Clock): Headlights | null {
   if (!HEADLIGHT.enabled) return null;
 
   const { beam, lamp, flicker } = HEADLIGHT;
   /** 0 stands the glow upright facing the road, a quarter turn lies it flat. */
   const lampPitch = (Math.PI / 2) * (1 - lamp.tilt);
 
-  // Colour is baked into each texture rather than set on the material. See the
-  // note on `additive` below — StandardMaterial adds its emissive texture to
-  // `emissiveColor` instead of multiplying, so a white texture would force the
-  // result to white no matter what colour the material asked for.
+  // Colour is baked into every texture rather than set on the material — see
+  // `unlit` in core/visuals for why that is the only thing that works.
   const cone = beamTexture(scene, HEADLIGHT.frontColour, beam.brightness);
-  const frontBulb = bulbTexture(scene, "headlight.frontTex", HEADLIGHT.frontColour, lamp.brightness);
-  const backBulb = bulbTexture(scene, "headlight.backTex", HEADLIGHT.backColour, lamp.brightness);
+  const frontBulb = bulb(scene, "headlight.frontTex", HEADLIGHT.frontColour, lamp.brightness);
+  const backBulb = bulb(scene, "headlight.backTex", HEADLIGHT.backColour, lamp.brightness);
 
-  const beamMaterial = additive(scene, "headlight.beamMat", cone);
-  const frontMaterial = additive(scene, "headlight.frontMat", frontBulb);
-  const backMaterial = additive(scene, "headlight.backMat", backBulb);
+  const beamMaterial = unlit(scene, "headlight.beamMat", { texture: cone, glow: true });
+  const frontMaterial = unlit(scene, "headlight.frontMat", { texture: frontBulb, glow: true });
+  const backMaterial = unlit(scene, "headlight.backMat", { texture: backBulb, glow: true });
 
-  const beamSource: Source = { mesh: null };
-  const frontSource: Source = { mesh: null };
-  const backSource: Source = { mesh: null };
+  const beamSource = planeSource();
+  const frontSource = planeSource();
+  const backSource = planeSource();
   const parts: AbstractMesh[] = [];
   const rigs: BeamRig[] = [];
-  const faults = createFlicker(scene, flicker);
+  const faults = createFlicker(clock, flicker);
 
   const place = (
-    source: Source,
+    source: PlaneSource,
     name: string,
     material: StandardMaterial,
     width: number,
@@ -113,32 +111,10 @@ export function createHeadlights(scene: Scene): Headlights | null {
     /** Quarter turn lies the plane flat; 0 leaves it upright facing the road. */
     pitch: number,
   ): AbstractMesh => {
-    let mesh: AbstractMesh;
-    if (source.mesh) {
-      mesh = source.mesh.createInstance(name);
-    } else {
-      const created = MeshBuilder.CreatePlane(name, { width, height }, scene);
-      created.material = material;
-      created.isPickable = false;
-      created.receiveShadows = false;
-      // A glow is not dimmed by haze the way a surface is, and letting the fog
-      // eat these defeats the point of lighting the road at all.
-      created.applyFog = false;
-      created.doNotSyncBoundingInfo = true;
-      source.mesh = created;
-      mesh = created;
-    }
-
+    const mesh = plane(scene, source, name, material, width, height);
     mesh.parent = parent;
     mesh.position.set(x, y, z);
     // Both faces draw, so which way the normal ended up pointing does not matter.
-    //
-    // None of these is billboarded, and that is deliberate: billboarding writes
-    // the world matrix directly, and it cannot do that correctly through a parent
-    // chain containing the glTF root's (1, 1, -1) mirror — it put the lamps at
-    // y = -1.5 rather than +0.55, under the road, where nothing they were given
-    // had any visible effect. A fixed pitch needs no special case and costs
-    // nothing per frame.
     mesh.rotation.set(pitch, 0, 0);
     parts.push(mesh);
     return mesh;
@@ -248,12 +224,12 @@ export function createHeadlights(scene: Scene): Headlights | null {
     }
   };
 
-  const observer = scene.onBeforeRenderObservable.add(sync);
+  const stop = clock.each(sync);
 
   return {
     attach,
     dispose: () => {
-      scene.onBeforeRenderObservable.remove(observer);
+      stop();
       for (const rig of rigs) rig.node.dispose();
       rigs.length = 0;
       for (const part of parts) part.dispose();
@@ -292,9 +268,9 @@ function beamTexture(scene: Scene, colour: Color3, brightness: number): DynamicT
   const image = ctx.createImageData(size, size);
   const data = image.data;
 
-  const red = channel(colour.r, brightness);
-  const green = channel(colour.g, brightness);
-  const blue = channel(colour.b, brightness);
+  const red = byte(colour.r, brightness);
+  const green = byte(colour.g, brightness);
+  const blue = byte(colour.b, brightness);
 
   // The plane is as wide as the cone ever gets, so the two widths become
   // fractions of it: a narrow sliver where it leaves the lamp, opening to the
@@ -348,7 +324,7 @@ function beamTexture(scene: Scene, colour: Color3, brightness: number): DynamicT
       data[i] = red;
       data[i + 1] = green;
       data[i + 2] = blue;
-      data[i + 3] = Math.round(Math.max(0, Math.min(1, alpha)) * 255);
+      data[i + 3] = byte(alpha);
     }
   }
 
@@ -361,63 +337,95 @@ function beamTexture(scene: Scene, colour: Color3, brightness: number): DynamicT
 }
 
 /** A lamp seen head on: a small core inside a wide, very soft halo. */
-function bulbTexture(
-  scene: Scene,
-  name: string,
-  colour: Color3,
-  brightness: number,
-): DynamicTexture {
-  const size = 64;
-  const texture = new DynamicTexture(name, size, scene, true);
-  const ctx = texture.getContext() as CanvasRenderingContext2D;
-  const rgb = `${channel(colour.r, brightness)},${channel(colour.g, brightness)},${channel(colour.b, brightness)}`;
-  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  gradient.addColorStop(0, `rgba(${rgb},1)`);
-  gradient.addColorStop(0.2, `rgba(${rgb},0.55)`);
-  gradient.addColorStop(0.45, `rgba(${rgb},0.16)`);
-  gradient.addColorStop(0.72, `rgba(${rgb},0.04)`);
-  gradient.addColorStop(1, `rgba(${rgb},0)`);
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, size, size);
-  texture.update();
-  texture.hasAlpha = true;
-  texture.wrapU = Texture.CLAMP_ADDRESSMODE;
-  texture.wrapV = Texture.CLAMP_ADDRESSMODE;
-  return texture;
-}
-
-/** One colour channel, baked at its brightness and clamped to what the shader
- *  can carry. */
-export function channel(value: number, brightness: number): number {
-  return Math.round(Math.max(0, Math.min(1, value * brightness)) * 255);
+function bulb(scene: Scene, name: string, colour: Color3, brightness: number): DynamicTexture {
+  return radialTexture(
+    scene,
+    name,
+    [
+      [0, 1],
+      [0.2, 0.55],
+      [0.45, 0.16],
+      [0.72, 0.04],
+      [1, 0],
+    ],
+    colour,
+    brightness,
+  );
 }
 
 /**
- * Additive, depth-write off, unlit, and — the part that matters — carrying no
- * emissive colour of its own.
+ * Where a car's lamps belong, in its rig's own space.
  *
- * StandardMaterial *adds* its emissive texture to `emissiveColor` rather than
- * multiplying by it, and then clamps the sum to 1:
+ * Read from marker nodes in the model first: a `forntLamp` and a `backLamp`
+ * (that spelling is the model's, not a slip), each with a `left` and a `right`
+ * child. A lamp goes at each of the four, exactly where the marker sits — the
+ * models are different shapes, and a position measured off the bumper is only
+ * ever right for some of them. Nothing is added to a marker's position.
  *
- *   emissiveColor = vEmissiveColor + texture.rgb;   // default.fragment
- *   finalDiffuse  = clamp(... + emissiveColor ..., 0.0, 1.0)
+ * Markers are read from the *template* rather than the clone, so it makes no
+ * difference whether Babylon carries empty nodes across when a mesh is cloned.
+ * `offset` is the shift the clone's body was given to centre its footprint on
+ * the rig; adding it is not a fudge but the same move the bodywork made, and
+ * without it the lamps would sit where the car used to be parked in the city.
  *
- * So a white texture pins every channel at 1 and the light comes out pure white
- * however warm a colour the material was given — which is why raising the
- * saturation on the material had no effect at all. The colour has to live in the
- * texture's RGB instead, leaving `emissiveColor` black.
+ * 8 of the 20 models carry markers. The rest fall back to the bounding box, so
+ * the two coexist: export a car with markers and it starts using them, with
+ * nothing else to change. The fallback takes its height from the car's own roof
+ * rather than a number in the config — a van and a hatchback do not carry their
+ * lamps at the same height, and one figure for both is wrong for at least one.
+ *
+ * Left comes first in both cases. The marked models put `left` on +x of the rig,
+ * so the fallback does the same: the idle puffs rely on index 0 being the left
+ * side whichever kind of car it is.
  */
-export function additive(scene: Scene, name: string, texture: Texture): StandardMaterial {
-  const material = new StandardMaterial(name, scene);
-  material.diffuseColor = Color3.Black();
-  material.specularColor = Color3.Black();
-  material.emissiveColor = Color3.Black();
-  material.disableLighting = true;
-  material.emissiveTexture = texture;
-  material.opacityTexture = texture;
-  material.alphaMode = 1; // additive: src.rgb * src.a + dst
-  material.backFaceCulling = false;
-  material.disableDepthWrite = true;
-  material.freeze();
-  return material;
+export function lampMounts(
+  template: Mesh,
+  offset: Vector3,
+  length: number,
+  width: number,
+  height: number,
+): LampMounts {
+  const { mounts, lamp } = HEADLIGHT;
+  const toLocal = Matrix.Invert(template.getWorldMatrix());
+
+  const pair = (group: string): Vector3[] => {
+    const node = template.getDescendants(false, (child) => child.name === group)[0];
+    if (!node) return [];
+
+    return [mounts.left, mounts.right]
+      .map((side) => node.getDescendants(false, (child) => child.name === side)[0])
+      .filter((side): side is TransformNode => !!side)
+      .map((side) => {
+        side.computeWorldMatrix(true);
+        // Into the template's space, then into the rig's by the same shift the
+        // body was given.
+        return Vector3.TransformCoordinates(side.getAbsolutePosition(), toLocal).addInPlace(offset);
+      });
+  };
+
+  const nose = length / 2;
+  const side = (width / 2) * lamp.apart;
+  const front = pair(mounts.front);
+  const back = pair(mounts.back);
+
+  return {
+    front: front.length > 0 ? front : [
+      new Vector3(side, height * FALLBACK_FRONT, nose),
+      new Vector3(-side, height * FALLBACK_FRONT, nose),
+    ],
+    back: back.length > 0 ? back : [
+      new Vector3(side, height * FALLBACK_BACK, -nose),
+      new Vector3(-side, height * FALLBACK_BACK, -nose),
+    ],
+  };
 }
+
+/**
+ * Where the lamps go on a car with no markers, as a fraction of its own height.
+ *
+ * Both figures are the average of the eight models that *are* marked: their
+ * headlamps sit at 0.42 of the roof and their rear lamps a little higher, at
+ * 0.53. An unmarked car therefore lands where a marked car of its shape would.
+ */
+const FALLBACK_FRONT = 0.42;
+const FALLBACK_BACK = 0.53;

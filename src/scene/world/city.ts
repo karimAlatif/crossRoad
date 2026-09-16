@@ -18,7 +18,7 @@ import {
   EMISSIVE_REVIVE,
   EMISSIVE_STRENGTH,
   PROPS,
-} from "./config";
+} from "../config";
 
 export type City = {
   container: AssetContainer;
@@ -27,7 +27,6 @@ export type City = {
   /** The `Cars` group, kept hidden — the traffic clones its models. */
   cars: TransformNode | null;
   meshes: AbstractMesh[];
-  stats: { meshes: number; vertices: number };
 };
 
 export type LoadProgress = (fraction: number | null, label: string) => void;
@@ -93,16 +92,7 @@ export async function loadCity(scene: Scene, onProgress: LoadProgress): Promise<
     mesh.doNotSyncBoundingInfo = true;
   }
 
-  return {
-    container,
-    crossroad,
-    cars,
-    meshes,
-    stats: {
-      meshes: meshes.length,
-      vertices: meshes.reduce((total, mesh) => total + mesh.getTotalVertices(), 0),
-    },
-  };
+  return { container, crossroad, cars, meshes };
 }
 
 function isProtected(node: Node): boolean {

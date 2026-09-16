@@ -7,7 +7,7 @@ import {
   type AbstractMesh,
   type Scene,
 } from "@babylonjs/core";
-import { FILL, SUN } from "./config";
+import { FILL, SUN } from "../config";
 
 export type Lighting = {
   sun: DirectionalLight;

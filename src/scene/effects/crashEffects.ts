@@ -1,28 +1,32 @@
-import {
-  Color4,
-  DynamicTexture,
-  ParticleSystem,
-  Vector3,
-  type Scene,
-} from "@babylonjs/core";
-import { grow } from "./carEffects";
-import { CRASH } from "./config";
+import { Color4, ParticleSystem, Vector3, type Scene } from "@babylonjs/core";
+import { CRASH } from "../config";
+import type { Disposable } from "../core/types";
+import { radialTexture } from "../core/visuals";
+import { burstSystem, grow } from "./particles";
 
-export type CrashEffects = {
+export type CrashEffects = Disposable & {
+  /** The full impact: flash, sparks and smoke. */
   burst: (at: Vector3) => void;
+  /** Just the smoke, for a wreck going up in a puff as it is cleared away. */
   puff: (at: Vector3) => void;
-  dispose: () => void;
 };
 
 /**
  * The cartoon impact: a white flash, a spray of sparks and a slow smoke puff.
- * The sparks are tuned in `CRASH.sparks`.
  * All three share one generated dot texture, so nothing is downloaded.
+ *
+ * Unlike the car effects, these fire one at a time — two cars hitting each other
+ * is one impact — so they use Babylon's own sphere emitter and need none of the
+ * burst queueing in `carEffects`.
  */
 export function createCrashEffects(scene: Scene): CrashEffects {
-  const dot = softDot(scene);
+  const dot = radialTexture(scene, "crash.dot", [
+    [0, 1],
+    [0.4, 0.6],
+    [1, 0],
+  ]);
 
-  const flash = system(scene, "crash.flash", dot, 12);
+  const flash = burstSystem(scene, "crash.flash", dot, 12);
   flash.minSize = 2.4;
   flash.maxSize = 5.2;
   flash.minLifeTime = 0.1;
@@ -35,7 +39,8 @@ export function createCrashEffects(scene: Scene): CrashEffects {
 
   // The sparks that used to come off a car pulling away, moved here: fast, hot
   // and heavy, flung out in every direction and dragged straight back down.
-  const sparks = system(scene, "crash.sparks", dot, CRASH.sparks.capacity);
+  const sparks = burstSystem(scene, "crash.sparks", dot, CRASH.sparks.capacity);
+  sparks.blendMode = ParticleSystem.BLENDMODE_ADD;
   grow(sparks, CRASH.sparks.size);
   sparks.minLifeTime = 0.2;
   sparks.maxLifeTime = 0.55;
@@ -47,7 +52,7 @@ export function createCrashEffects(scene: Scene): CrashEffects {
   sparks.minEmitPower = 4;
   sparks.maxEmitPower = 11;
 
-  const smoke = system(scene, "crash.smoke", dot, 40);
+  const smoke = burstSystem(scene, "crash.smoke", dot, 40);
   smoke.minSize = 1;
   smoke.maxSize = 2.6;
   smoke.minLifeTime = 0.7;
@@ -80,36 +85,4 @@ export function createCrashEffects(scene: Scene): CrashEffects {
       dot.dispose();
     },
   };
-}
-
-function system(
-  scene: Scene,
-  name: string,
-  texture: DynamicTexture,
-  capacity: number,
-): ParticleSystem {
-  const particles = new ParticleSystem(name, capacity, scene);
-  particles.particleTexture = texture;
-  particles.emitter = new Vector3();
-  particles.blendMode = ParticleSystem.BLENDMODE_ADD;
-  // Bursts only: emitRate stays at zero and manualEmitCount does the work.
-  particles.emitRate = 0;
-  particles.updateSpeed = 0.014;
-  particles.start();
-  return particles;
-}
-
-function softDot(scene: Scene): DynamicTexture {
-  const size = 64;
-  const texture = new DynamicTexture("crash.dot", size, scene, false);
-  const ctx = texture.getContext() as CanvasRenderingContext2D;
-  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  gradient.addColorStop(0, "rgba(255,255,255,1)");
-  gradient.addColorStop(0.4, "rgba(255,255,255,0.6)");
-  gradient.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, size, size);
-  texture.update();
-  texture.hasAlpha = true;
-  return texture;
 }
