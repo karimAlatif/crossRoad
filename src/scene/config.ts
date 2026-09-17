@@ -28,25 +28,67 @@ export const ASSET_URL = "/models/scene.glb";
 
 /** The locked-off 3/4 game view, and how far the player may stray from it. */
 export const CAMERA = {
-  /** Horizontal orbit, radians. Puts the sun off to the left and the crossing in frame. */
-  alpha: -Math.PI * 0.62,
-  /** Pitch from straight up. ~52° reads as a chunky toy-city view. */
-  beta: 1.02,
-  radius: 50,
-  lowerRadiusLimit: 20,
-  upperRadiusLimit: 82,
-  /** Never let the camera dip below the street or fly straight overhead. */
-  lowerBetaLimit: 0.22,
-  upperBetaLimit: 1.32,
+  /**
+   * The one view the game is played from.
+   *
+   * `alpha` and `beta` are in degrees, the way they read off a scene inspector:
+   * alpha swings the camera round the target, beta tilts it down from straight
+   * overhead. `target` is a world position — the point the camera looks at, and
+   * the point everything orbits.
+   */
+  view: {
+    target: new Vector3(-4, 0, 2),
+    alpha: 254,
+    beta: 53,
+    radius: 50,
+  },
+
   minZ: 0.8,
   maxZ: 900,
   fov: 0.72,
-  /** Where the intro fly-in starts. */
-  introRadius: 165,
-  introBeta: 0.48,
-  introAlphaOffset: -0.85,
-  introDurationMs: 3200,
-} as const;
+
+  /**
+   * The opening shot.
+   *
+   * The move is authored in the model: a `cameraPath` node holding a `start`, an
+   * `end` and a `view`. The camera drives from `start` to `end`, turns onto the
+   * `view` marker on the way, and then eases into the view above. If the model
+   * has no such node the fly-in happens anyway, from a wide establishing shot
+   * worked out from the view itself.
+   *
+   *   flySeconds     time spent driving from `start` to `end`
+   *   lookAhead      metres past the end of the path that the camera watches
+   *                  while it drives. This is what makes the opening a drive up
+   *                  the street rather than a slow approach to a junction that
+   *                  is already in frame
+   *   turnAt         how far through the drive the camera starts turning onto
+   *                  the `view` marker, 0 to 1. At 0.8 it spends the last fifth
+   *                  of the drive swinging the crossroad into frame, so it is
+   *                  already looking at it when it arrives. The drive itself is
+   *                  untouched by this — only the direction the camera faces
+   *   settleSeconds  time spent rising off the road into the view above, the
+   *                  look-at easing the rest of the way onto `view.target`
+   *   fallback       the establishing shot used when the model has no path.
+   *                  `alphaOffset` and `beta` are degrees
+   */
+  intro: {
+    group: "cameraPath",
+    start: "start",
+    end: "end",
+    view: "view",
+    flySeconds: 3,
+    lookAhead: 30,
+    turnAt: 0.01,
+    settleSeconds: .6,
+    fallback: { alphaOffset: -49, beta: 27, radius: 165 },
+  },
+
+  /**
+   * Pins the camera on the view once the intro is over: inputs removed, limits
+   * closed onto the exact angles it holds. Nothing moves it after that.
+   */
+  locked: true,
+};
 
 /** Mid-morning sun: long shadows across the asphalt, warm key, cool sky fill. */
 export const SUN = {
@@ -122,7 +164,7 @@ export const POST = {
   bloom: { weight: 0.45, threshold: 0.75, kernel: 64, scale: 0.6 },
   /** Tilt-shift: shallow depth of field is what makes a city read as a toy. */
   dof: { fStop: 1.4, focalLength: 62, blurLevel: 0 },
-  image: { exposure: 1.15, contrast: 1.28, saturation: 40, vignetteWeight: 2.6 },
+  image: { exposure: 2.1, contrast: 1.4, saturation: 40, vignetteWeight: 2.6 },
   sharpen: { edgeAmount: 0.22, colorAmount: 1.0 },
   grain: 4,
   chromaticAberration: 3.5,
@@ -184,7 +226,7 @@ export const TRAFFIC = {
  */
 export const ROAD_ONE = {
   /** How many cars travel together in one wave. */
-  carsPerWave: { min: 1, max: 8 },
+  carsPerWave: { min: 3, max: 8 },
   /**
    * Cruise speed, drawn once per wave rather than per car.
    *
@@ -198,7 +240,7 @@ export const ROAD_ONE = {
    * run the junction in, so it is the main dial for how hard the game is:
    * longer means more room to cross.
    */
-  breakTime: { min: 1, max: 1.5 },
+  breakTime: { min: .25, max: .6 },
   /**
    * Bumper gap between cars inside a wave, drawn once per wave like `speed`, so
    * one wave runs tight and the next runs loose.

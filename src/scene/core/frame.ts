@@ -32,15 +32,24 @@ const MAX_STEP = 1 / 20;
  */
 export function createClock(scene: Scene): Clock {
   const engine = scene.getEngine();
-  const ticks: Tick[] = [];
+  const ticks: (Tick | null)[] = [];
   let elapsed = 0;
+  let removed = false;
 
   const frame = () => {
     const dt = Math.min(engine.getDeltaTime() / 1000, MAX_STEP);
     // Two frames can share a timestamp; there is nothing to advance.
     if (dt <= 0) return;
     elapsed += dt;
-    for (let i = 0; i < ticks.length; i++) ticks[i](dt, elapsed);
+
+    for (let i = 0; i < ticks.length; i++) ticks[i]?.(dt, elapsed);
+
+    // A tick is allowed to unsubscribe itself — the camera intro does exactly
+    // that when it finishes — so removals leave a hole and the list is closed up
+    // afterwards rather than shifting under the loop that is still running.
+    if (!removed) return;
+    removed = false;
+    for (let i = ticks.length - 1; i >= 0; i--) if (!ticks[i]) ticks.splice(i, 1);
   };
 
   const observer: Observer<Scene> | null = scene.onBeforeRenderObservable.add(frame);
@@ -50,7 +59,9 @@ export function createClock(scene: Scene): Clock {
       ticks.push(tick);
       return () => {
         const at = ticks.indexOf(tick);
-        if (at >= 0) ticks.splice(at, 1);
+        if (at < 0) return;
+        ticks[at] = null;
+        removed = true;
       };
     },
     now: () => elapsed,

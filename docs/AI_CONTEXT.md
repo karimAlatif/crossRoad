@@ -29,7 +29,7 @@ src/scene/
   world/               things that do not move
     city.ts            loads the .glb, revives emissives, freezes statics
     props.ts           reads the authored marker hierarchy
-    camera.ts          locked 3/4 view + intro fly-in
+    camera.ts          the one view, the authored fly-in, and the pin
     lighting.ts        sun, fill, cascaded shadows
     environment.ts     sky dome + baked IBL
     postProcess.ts     bloom, tone mapping, DoF, glow layer, SSAO
@@ -116,6 +116,40 @@ is invisible" rather than an error.
     the left side, in both paths.
 11. **Audio needs a user gesture.** Files are fetched at load, decoded on the
     first click. Calls before that are dropped, not queued.
+12. **`ArcRotateCamera.setTarget` rebuilds alpha/beta/radius** from where the
+    camera currently is, silently undoing a shot that was just set. Pass its
+    fourth argument (`cloneAlphaBetaRadius`) to keep them. It also returns early
+    when the new target equals the old one, so a bug here can hide.
+13. **The camera is pinned after the intro**: inputs cleared and both limits of
+    each angle closed onto the held value. That is deliberate and is what makes
+    it immovable even against direct writes to `camera.alpha`. `CAMERA.locked`
+    turns it off.
+14. **The opening shot is authored in the model** as `cameraPath` → `start`,
+    `end`, `view`. `view` is the point the camera turns onto part-way through the
+    drive (`CAMERA.intro.turnAt`); it is optional, and without it the camera
+    keeps looking ahead and turns on the way up. The markers are placeholders and
+    are hidden once read. With no `cameraPath` at all the intro falls back to a
+    wide shot derived from the view.
+15. **The intro animates two separate tracks, not one pose list**: where the
+    camera *stands* and what it *looks at*, each a list of keyed positions eased
+    segment by segment. Keeping them apart is the whole point — the look-at has a
+    key at 80% of the drive that the standing track does not, so the camera can
+    start turning mid-drive without that key splitting the drive into two legs
+    and making it slow down in the middle. Each frame sets `setTarget` then
+    `setPosition`, in that order (`setPosition` reads the target to work the
+    angles out). Animating alpha/beta/radius instead makes every leg an arc and
+    needs `overrideCloneAlphaBetaRadius` to survive a moving target; that
+    approach was tried and removed. An ArcRotateCamera also cannot be flown by
+    animating `position` directly — it rebuilds position from its angles every
+    frame, and `setPosition` is what works the sum backwards.
+16. **The intro is one clock tick and it unsubscribes itself on arrival** — which
+    is why `core/frame.ts` tolerates a tick removing itself mid-iteration. After
+    `pin` nothing of the camera runs. `positionOf()` in `camera.ts` is the
+    forward form of the same sum, used to turn the game view into the last pose.
+17. **`camera.position` is only recomputed when the view matrix is.** Reading it
+    in a headless harness that never renders gives a stale value — call
+    `camera.getViewMatrix()` first. This produced a false "the camera never
+    rises" reading once.
 
 ## Verifying changes
 

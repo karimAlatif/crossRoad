@@ -12,9 +12,9 @@ npm run build    # typecheck + production bundle into dist/
 npm run preview  # serve the production build
 ```
 
-**Click anywhere to change the light.** Drag to orbit and scroll to zoom — the
-framing is clamped so the junction cannot leave the shot. There is no HUD by
-design.
+**Click anywhere to change the light.** That is the whole control scheme: the
+camera flies the opening shot authored in the model, settles into the game view
+and stays there. There is no HUD by design.
 
 ## Where things are
 

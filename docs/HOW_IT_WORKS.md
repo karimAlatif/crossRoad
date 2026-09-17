@@ -58,7 +58,7 @@ loading screen.
    - The `Cars` group is hidden. It is not decoration; it is the library the
      traffic clones from.
    - Every static mesh is frozen, so Babylon stops recalculating where it is.
-6. **The camera** is placed on the junction and the intro fly-in starts.
+6. **The camera** is placed and the opening shot begins — see section 6.
 7. **Shadows**: only meshes near the junction, and only ones big enough to cast a
    shadow you could see, are registered.
 8. **Street lamps** are placed on the `spot` marker inside each lamp post.
@@ -84,6 +84,10 @@ props
   ├── traffic light      where the signal stands
   ├── roodOne            start, end
   └── roodTwo            start, end, cross      ← "cross" is the stop line
+
+cameraPath               the opening shot
+  ├── start
+  └── end
 ```
 
 Each car model may also carry lamp markers:
@@ -177,7 +181,77 @@ draws fresh random values and starts new skid marks.
 
 ---
 
-## 6. A car
+## 6. The camera
+
+There is exactly one view, and the player never moves it.
+
+`CAMERA.view` holds it: a world `target` the camera looks at, an `alpha` that
+swings it round that point, a `beta` that tilts it down from overhead, and a
+`radius`. **The two angles are in degrees**, the way they read off a scene
+inspector.
+
+The opening move is authored in the model, as the `cameraPath` node above —
+`start` and `end` for the drive, and `view` for the point the camera turns onto
+along the way.
+
+**Forward along the path.** The camera drives in a straight line from `start` to
+`end`, looking *down the road* — at a point `lookAhead` metres past the end of
+the path — not at the junction. That is what makes the opening a drive up the
+street rather than a slow approach to a crossroad you can already see. It eases
+away and arrives gently rather than running at one speed and stopping dead.
+
+**The turn, four fifths of the way along.** At `turnAt` of the drive the camera
+starts swinging its gaze onto the `view` marker, and lands on it exactly as it
+reaches `end`. So the crossroad comes into frame while the camera is still
+moving, and the arrival is already looking at it. The drive itself is untouched
+by this — the camera does not slow down, change line or change speed; only the
+direction it faces.
+
+**Then up into the game view.** From the end of the path the camera rises and
+swings out to the game's distance, the look-at easing the rest of the way from
+the `view` marker onto `CAMERA.view.target`. It climbs from 10 m on the road to
+about 30 m above the crossroad and comes to rest exactly on `CAMERA.view`.
+
+All of that is two tracks of keyframes — one for where the camera *stands*, one
+for what it *looks at*:
+
+| time | stands | looks at |
+|---|---|---|
+| 0 | `start` | down the path |
+| `turnAt · flySeconds` | — | down the path (held) |
+| `flySeconds` | `end` | the `view` marker |
+| `+ settleSeconds` | the game view | `view.target` |
+
+and the intro eases along both at once. Keeping them apart is exactly what buys
+the mid-drive turn: the look-at has a key at 80% that the standing track knows
+nothing about, so the drive is still one unbroken move from `start` to `end`.
+
+Describing the camera by position and look-at, rather than by `alpha`, `beta` and
+`radius`, is what keeps the rest simple. An ArcRotateCamera's position is a
+*consequence* of those three numbers swung around its target, so animating them
+directly would make every leg an arc, and every change of target would silently
+rewrite them. Here the camera is put where it should be and pointed where it
+should look, and Babylon works the angles out backwards.
+
+It is one callback on the shared clock, and it unsubscribes itself the moment it
+arrives, so once the intro is over nothing of it is running at all.
+
+**The shot is yours to author.** Move `start`, `end` and `view` in the model to
+change the drive and what it turns onto. `CAMERA.intro.lookAhead` sets how far
+down the road the camera watches on the way in, `turnAt` when the turn begins
+(0.8 = the last fifth of the drive), and `flySeconds` and `settleSeconds` time
+the two halves. If the model has no `cameraPath`, a wide establishing shot is
+worked out from the view instead, so the intro still happens.
+
+**Then it is pinned.** The camera's inputs are removed and both limits of each
+angle are closed onto the value it holds, so nothing can move it — not a drag,
+not a scroll, not something calling `attachControl` later, not even code setting
+`camera.alpha` directly. Set `CAMERA.locked` to `false` if you ever want it to
+let go.
+
+---
+
+## 7. A car
 
 Each car is a stack of transform nodes, each with exactly one writer:
 
@@ -210,7 +284,7 @@ smoke with it.
 
 ---
 
-## 7. Effects
+## 8. Effects
 
 All in `effects/`, all tuned in `CAR_FX`, `SKID_MARK` and `LIGHT_TRAIL`.
 
@@ -247,7 +321,7 @@ every time it sets off, so no two cars lay quite the same marks.
 
 ---
 
-## 8. Night
+## 9. Night
 
 There are only **three real lights in the whole scene**: the sun, the sky fill,
 and one spill light on the signal. Everything else that glows is flat geometry
@@ -274,7 +348,7 @@ then be paid for on every pixel of every surface.
 
 ---
 
-## 9. Sound
+## 10. Sound
 
 `audio/sound.ts`, tuned in `SOUND`. Four sounds: a looping **theme** at 60%, and
 one-shots for **move**, **brake** and **accident**.
@@ -307,7 +381,7 @@ downloaded during loading and decoded on that click.
 
 ---
 
-## 10. Where to change what
+## 11. Where to change what
 
 | I want to change… | Look at |
 |---|---|
@@ -326,11 +400,11 @@ downloaded during loading and decoded on that click.
 | what to switch off for speed | `QUALITY` |
 | crashes | `CRASH` |
 | sound | `SOUND` |
-| the camera framing | `CAMERA` |
+| the view, and the opening shot | `CAMERA.view`, `CAMERA.intro` |
 
 ---
 
-## 11. Things that will surprise you
+## 12. Things that will surprise you
 
 - **`capacity` is not `count`.** `count` is how many particles a puff makes;
   `capacity` is the ceiling for that effect across every car at once. Set

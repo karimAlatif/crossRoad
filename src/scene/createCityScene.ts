@@ -6,8 +6,9 @@ import {
   type ArcRotateCamera,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF/2.0";
+import "@babylonjs/inspector"; // Add this line!
 
-import { createCamera, playIntro } from "./world/camera";
+import { createCamera, playIntro, readCameraPath } from "./world/camera";
 import { loadCity, type LoadProgress } from "./world/city";
 import { createEnvironment } from "./world/environment";
 import { createLighting, registerShadowCasters } from "./world/lighting";
@@ -30,9 +31,6 @@ export type CityScene = Disposable & {
   isGreen: () => boolean;
   toggleLight: () => void;
 };
-
-/** Aim at road level: the junction is the subject, not the skyline. */
-const TARGET_LIFT = 0;
 
 export async function createCityScene(
   canvas: HTMLCanvasElement,
@@ -68,9 +66,7 @@ export async function createCityScene(
   const city = await loadCity(scene, onProgress);
 
   onProgress(1, "Placing the camera");
-  const target = city.crossroad.add(new Vector3(0, TARGET_LIFT, 0));
-  const camera = createCamera(scene, target);
-  camera.attachControl(canvas, true);
+  const camera = createCamera(scene);
 
   onProgress(1, "Casting shadows");
   registerShadowCasters(lighting, city.meshes, city.crossroad);
@@ -124,13 +120,16 @@ export async function createCityScene(
     traffic.update(dt, light.isGreen());
   });
 
-  playIntro(camera);
+  playIntro(camera, clock, readCameraPath(scene));
 
   const render = () => scene.render();
   engine.runRenderLoop(render);
+  // scene.debugLayer.show();
 
   const onResize = () => engine.resize();
   window.addEventListener("resize", onResize);
+
+  
 
   return {
     engine,
