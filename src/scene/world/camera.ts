@@ -1,8 +1,10 @@
 import {
   ArcRotateCamera,
+  Camera,
   CubicEase,
   EasingFunction,
   Vector3,
+  type AbstractEngine,
   type AbstractMesh,
   type Node,
   type Scene,
@@ -35,7 +37,9 @@ type Move = { stands: Key[]; looks: Key[]; seconds: number };
  * else in the project decides to attach a control later.
  */
 export function createCamera(scene: Scene): ArcRotateCamera {
-  const view = gameView();
+  framed = gameView();
+  arrived = false;
+  const view = framed;
   const camera = new ArcRotateCamera(
     "crossroadCam",
     view.alpha,
@@ -48,12 +52,76 @@ export function createCamera(scene: Scene): ArcRotateCamera {
   camera.fov = CAMERA.fov;
   camera.minZ = CAMERA.minZ;
   camera.maxZ = CAMERA.maxZ;
+  // `fov` is the vertical angle and the horizontal one follows from the aspect
+  // ratio. `fitToScreen` does its arithmetic in those terms, so this is not the
+  // default being left alone — it is the default being relied on.
+  camera.fovMode = Camera.FOVMODE_VERTICAL_FIXED;
   // Nothing drives this camera but the intro. Clearing the inputs is what makes
   // that true no matter who calls attachControl afterwards: there is nothing
   // left for it to attach.
   camera.inputs.clear();
 
   return camera;
+}
+
+/**
+ * The view as the screen in front of us needs it: the authored shot, at the
+ * distance `fitToScreen` settled on. Module state, because there is exactly one
+ * camera and one screen, and both the intro and the pin have to agree on where
+ * the journey ends.
+ */
+let framed: Shot = gameView();
+
+/** Whether the intro has handed over — i.e. whether `framed` is live on screen. */
+let arrived = false;
+
+/**
+ * Frames the shot for the screen it is actually on.
+ *
+ * Call it once the camera exists, and again whenever the canvas changes size.
+ *
+ * A phone held upright and a 21:9 monitor cannot show the same picture through
+ * the same lens: the narrower the screen, the less of the world fits across it,
+ * so a view framed on a desktop loses the sides of the junction on a phone.
+ * `CAMERA.frame` is the promise that fixes that — an area, in metres on the
+ * plane through the view's target, that is visible on every screen.
+ *
+ * Two things can keep that promise, and they are used in that order.
+ *
+ * **Open the lens.** Costs nothing and moves nothing: same spot, same angle,
+ * same distance, same fog — the same shot with a wider edge. It is capped at
+ * `maxFov` because this camera looks down at 37°, and once the lens opens past
+ * about 74° the top of the frame climbs over the horizon and the shot fills with
+ * sky.
+ *
+ * **Then step back.** Whatever the capped lens cannot cover is made up with
+ * distance, straight out along the same line, so the angle and the composition
+ * hold and the junction simply sits a little further away. The depth of field
+ * follows the camera's radius by itself, so the tilt-shift stays on the junction.
+ *
+ * On anything 4:3 or wider neither happens: `wanted` comes out under the
+ * authored `fov` and nothing changes at all.
+ *
+ * The arithmetic is one line either side of the aspect ratio. A vertical field
+ * of view `f` at distance `d` shows `d · tan(f / 2)` metres either side of the
+ * target vertically, and `aspect` times that horizontally. So `need` is the
+ * half-height the viewport must cover: the frame's own half-height, or its
+ * half-width folded through the aspect ratio, whichever is larger.
+ */
+export function fitToScreen(camera: ArcRotateCamera, engine: AbstractEngine): void {
+  const { width, height, maxFov } = CAMERA.frame;
+  const aspect = Math.max(0.05, engine.getAspectRatio(camera));
+  const need = Math.max(height / 2, width / 2 / aspect);
+
+  const wanted = 2 * Math.atan(need / CAMERA.view.radius);
+  // Never tighter than the authored lens, never wider than the guard.
+  const fov = Math.max(CAMERA.fov, Math.min(wanted, maxFov));
+  camera.fov = fov;
+
+  framed = { ...gameView(), radius: Math.max(CAMERA.view.radius, need / Math.tan(fov / 2)) };
+  // A resize after the intro: the camera is already sitting at the old distance,
+  // so move it to the new one and close the limits again.
+  if (arrived) pin(camera);
 }
 
 /**
@@ -118,8 +186,7 @@ export function readCameraPath(scene: Scene): CameraPath | null {
  * it arrives. Nothing of the intro runs afterwards.
  */
 export function playIntro(camera: ArcRotateCamera, clock: Clock, path: CameraPath | null): void {
-  const view = gameView();
-  const move = opening(view, path);
+  const move = opening(path);
   const ease = easeInOut();
 
   // Scratch, so the intro allocates nothing per frame.
@@ -143,7 +210,7 @@ export function playIntro(camera: ArcRotateCamera, clock: Clock, path: CameraPat
     elapsed += dt;
     if (elapsed >= move.seconds) {
       stop();
-      pin(camera, view);
+      pin(camera);
       return;
     }
     place(elapsed);
@@ -169,16 +236,18 @@ function sample(keys: Key[], moment: number, ease: CubicEase, into: Vector3): vo
  * swung off to one side of the view, easing straight in, so the opening still
  * happens.
  */
-function opening(view: Shot, path: CameraPath | null): Move {
+function opening(path: CameraPath | null): Move {
   const { flySeconds, settleSeconds, lookAhead, turnAt, fallback } = CAMERA.intro;
   const target = CAMERA.view.target;
-  const home = positionOf(view, target);
+  // Where the journey ends is the screen's business as much as the config's: on
+  // a narrow one the last pose is further back. See `fitToScreen`.
+  const home = positionOf(framed, target);
   const fly = Math.max(0.001, flySeconds);
   const seconds = fly + Math.max(0.001, settleSeconds);
 
   if (!path) {
     const wide: Shot = {
-      alpha: view.alpha + fallback.alphaOffset * DEG,
+      alpha: framed.alpha + fallback.alphaOffset * DEG,
       beta: fallback.beta * DEG,
       radius: fallback.radius,
     };
@@ -234,16 +303,24 @@ function opening(view: Shot, path: CameraPath | null): Move {
  * writing `camera.alpha` directly is clamped straight back. `CAMERA.locked`
  * turns this off if the camera is ever wanted back.
  */
-function pin(camera: ArcRotateCamera, view: Shot): void {
+function pin(camera: ArcRotateCamera): void {
+  arrived = true;
   camera.setTarget(CAMERA.view.target.clone(), false, false, true);
-  camera.alpha = view.alpha;
-  camera.beta = view.beta;
-  camera.radius = view.radius;
+  camera.alpha = framed.alpha;
+  camera.beta = framed.beta;
 
-  if (!CAMERA.locked) return;
-  camera.lowerAlphaLimit = camera.upperAlphaLimit = view.alpha;
-  camera.lowerBetaLimit = camera.upperBetaLimit = view.beta;
-  camera.lowerRadiusLimit = camera.upperRadiusLimit = view.radius;
+  if (!CAMERA.locked) {
+    camera.radius = framed.radius;
+    return;
+  }
+  camera.lowerAlphaLimit = camera.upperAlphaLimit = framed.alpha;
+  camera.lowerBetaLimit = camera.upperBetaLimit = framed.beta;
+  // Reopened before the distance is set, because the limits from the last screen
+  // size would otherwise clamp the new one straight back to the old.
+  camera.lowerRadiusLimit = null;
+  camera.upperRadiusLimit = null;
+  camera.radius = framed.radius;
+  camera.lowerRadiusLimit = camera.upperRadiusLimit = framed.radius;
   camera.inputs.clear();
   camera.detachControl();
 }

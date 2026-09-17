@@ -17,11 +17,27 @@ body,
   margin: 0;
 }
 
+/*
+ * A phone's "100%" is the tallest the page can be — with the address bar gone —
+ * so the bottom of the canvas sits under the bar until the player scrolls, which
+ * they cannot, because the page does not scroll. `dvh` is the viewport as it
+ * actually is at this moment, which is the only honest answer on mobile.
+ */
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+
 body {
   background: #070b14;
   color: var(--ink);
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
   overflow: hidden;
+  /* No pull-to-refresh and no rubber-banding from a drag across the canvas. */
+  overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -46,7 +62,9 @@ body {
   inset: 0;
   display: grid;
   place-items: center;
-  padding: 24px;
+  /* Clear of a notch, a rounded corner or a home indicator. */
+  padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right))
+    max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
   background: radial-gradient(120% 90% at 50% 15%, #17243e 0%, #080d18 58%, #05070d 100%);
   transition: opacity 900ms ease, visibility 0s linear 0s;
   z-index: 20;

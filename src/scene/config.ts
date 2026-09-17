@@ -45,7 +45,46 @@ export const CAMERA = {
 
   minZ: 0.8,
   maxZ: 900,
+
+  /**
+   * The lens, in radians, on a screen wide enough not to need any help. This is
+   * the tightest the camera will ever be; `frame` below only ever widens it.
+   */
   fov: 0.72,
+
+  /**
+   * What must stay in shot, whatever the screen.
+   *
+   * A phone in portrait and a 21:9 monitor cannot show the same picture: with a
+   * fixed lens, the narrower the screen the less of the world fits across it, so
+   * a view framed on a desktop loses the sides of the junction on a phone.
+   *
+   * So the *frame* is fixed and the camera adapts to it. `width` and `height`
+   * are metres, measured on the plane through `view.target` — the area the
+   * camera guarantees to show, whatever it is running on.
+   *
+   * It is kept two ways, in this order. First the lens opens, which costs
+   * nothing and moves nothing: same spot, same angle, same distance, the same
+   * shot with a wider edge. Then, only if that is not enough, the camera steps
+   * straight back along the same line, which holds the angle and the composition
+   * and simply puts the junction a little further away.
+   *
+   * The defaults are measured, not guessed: the junction's four corner poles
+   * need 49.8 x 30.4 m from this view, and a 16:9 screen shows 66.9 x 37.6 m. So
+   * anything 4:3 or wider is already covered and changes nothing at all; a
+   * tablet held upright opens the lens; a phone held upright opens it to the cap
+   * and then steps back.
+   *
+   *   maxFov  how far the lens may open before distance takes over. The camera
+   *           looks down at 37°, so past about 74° the top of the frame climbs
+   *           over the horizon and the shot fills with sky — 1.25 rad (72°)
+   *           stops just short of that
+   */
+  frame: {
+    width: 50,
+    height: 32,
+    maxFov: 1.25,
+  },
 
   /**
    * The opening shot.
@@ -240,7 +279,7 @@ export const ROAD_ONE = {
    * run the junction in, so it is the main dial for how hard the game is:
    * longer means more room to cross.
    */
-  breakTime: { min: .25, max: .6 },
+  breakTime: { min: .5, max: 1.2 },
   /**
    * Bumper gap between cars inside a wave, drawn once per wave like `speed`, so
    * one wave runs tight and the next runs loose.
@@ -323,6 +362,15 @@ export const LIGHT = {
 export const QUALITY = {
   /** Cap the render resolution: a 2x display would otherwise shade 4x the pixels. */
   maxPixelRatio: 1.5,
+  /**
+   * And cap it again by total pixels, so a 4K window does not quietly ask for
+   * four times the shading a 1080p one does. The scene is fill-rate bound — post
+   * stack, glow, shadows — so this is the single most effective knob on a big
+   * display. 2.5M is a little over 1080p.
+   */
+  maxPixels: 2_500_000,
+  /** ...but never render below this share of the CSS pixels, or it turns to mush. */
+  minRenderScale: 0.6,
   /**
    * Restrict the glow layer to the signal lamps. Left unrestricted it re-renders
    * every mesh with an emissive material — most of the city, once the window

@@ -8,13 +8,13 @@ import {
 import "@babylonjs/loaders/glTF/2.0";
 import "@babylonjs/inspector"; // Add this line!
 
-import { createCamera, playIntro, readCameraPath } from "./world/camera";
+import { createCamera, fitToScreen, playIntro, readCameraPath } from "./world/camera";
 import { loadCity, type LoadProgress } from "./world/city";
 import { createEnvironment } from "./world/environment";
 import { createLighting, registerShadowCasters } from "./world/lighting";
-import { QUALITY } from "./config";
 import { createClock } from "./core/frame";
 import type { Disposable } from "./core/types";
+import { createViewport } from "./core/viewport";
 import { createPostProcess } from "./world/postProcess";
 import { createSound } from "./audio/sound";
 import { readProps } from "./world/props";
@@ -42,12 +42,6 @@ export async function createCityScene(
     preserveDrawingBuffer: false,
     powerPreference: "high-performance",
   });
-  // A 2x display would otherwise shade four times the pixels for a scene that
-  // is already fill-rate bound through the post stack.
-  engine.setHardwareScalingLevel(
-    1 / Math.min(window.devicePixelRatio || 1, QUALITY.maxPixelRatio),
-  );
-
   const scene = new Scene(engine);
   scene.skipPointerMovePicking = true;
   scene.blockMaterialDirtyMechanism = true;
@@ -55,6 +49,11 @@ export async function createCityScene(
   // One heartbeat for the whole scene: every per-frame system hangs off this
   // rather than registering an observer of its own.
   const clock = createClock(scene);
+
+  const camera = createCamera(scene);
+  // Resolution and framing both follow the canvas, on every device: see
+  // core/viewport.ts.
+  const viewport = createViewport(engine, canvas, () => fitToScreen(camera, engine));
 
   // Started first so the sound files download alongside the city rather than
   // after it. Nothing plays until the player's first click.
@@ -64,9 +63,6 @@ export async function createCityScene(
   const lighting = createLighting(scene, environment.sunDirection);
 
   const city = await loadCity(scene, onProgress);
-
-  onProgress(1, "Placing the camera");
-  const camera = createCamera(scene);
 
   onProgress(1, "Casting shadows");
   registerShadowCasters(lighting, city.meshes, city.crossroad);
@@ -126,11 +122,6 @@ export async function createCityScene(
   engine.runRenderLoop(render);
   // scene.debugLayer.show();
 
-  const onResize = () => engine.resize();
-  window.addEventListener("resize", onResize);
-
-  
-
   return {
     engine,
     scene,
@@ -139,7 +130,7 @@ export async function createCityScene(
     isGreen: light.isGreen,
     toggleLight: light.toggle,
     dispose: () => {
-      window.removeEventListener("resize", onResize);
+      viewport.dispose();
       engine.stopRenderLoop(render);
       clock.dispose();
       scene.onPointerObservable.remove(pointer);

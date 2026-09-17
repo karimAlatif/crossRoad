@@ -25,6 +25,7 @@ src/scene/
     types.ts           Range, Disposable
     maths.ts           clamp01, between, mid, moveTowards, byte
     frame.ts           createClock — THE per-frame heartbeat
+    viewport.ts        resolution + resize, the only answer to the canvas
     visuals.ts         unlit materials, radialTexture, plane/planeSource instancing
   world/               things that do not move
     city.ts            loads the .glb, revives emissives, freezes statics
@@ -146,7 +147,22 @@ is invisible" rather than an error.
     is why `core/frame.ts` tolerates a tick removing itself mid-iteration. After
     `pin` nothing of the camera runs. `positionOf()` in `camera.ts` is the
     forward form of the same sum, used to turn the game view into the last pose.
-17. **`camera.position` is only recomputed when the view matrix is.** Reading it
+17. **Framing is a promise, not a lens setting.** `CAMERA.frame` is an area in
+    metres, on the plane through the view target, that must be visible on any
+    screen. `fitToScreen` keeps it by opening the lens first (free, moves
+    nothing) and only then stepping the camera back (`frame.maxFov` is where it
+    switches, set just under the angle at which the frame would climb over the
+    horizon and fill with sky). It runs on every canvas resize, so the *effective*
+    view is module state — `framed` in `camera.ts` — not `CAMERA.view`: the intro
+    ends there, `pin` closes onto it, and a resize after the intro re-pins. Any
+    new code that wants "the view" wants `framed`, not the config.
+18. **Only `core/viewport.ts` answers the canvas.** One `ResizeObserver` on the
+    canvas (not `window.resize` — the canvas resizes for reasons the window never
+    hears about), coalesced into one animation frame, settling resolution,
+    `engine.resize()` and framing together. Resolution is the smallest of the
+    device ratio, `QUALITY.maxPixelRatio` and `QUALITY.maxPixels`; the last is a
+    flat budget that keeps a 4K window from shading 4x a 1080p one.
+19. **`camera.position` is only recomputed when the view matrix is.** Reading it
     in a headless harness that never renders gives a stale value — call
     `camera.getViewMatrix()` first. This produced a false "the camera never
     rises" reading once.
@@ -211,6 +227,9 @@ What keeps it there, and must not be casually undone:
   materials are frozen after `whenReadyAsync`.
 - The pools are **rings**: `SKID_MARK.pool`, `LIGHT_TRAIL.pool` bound the road's
   memory and draw cost no matter how long the game runs.
+- The render resolution is **budgeted, not inherited** (`core/viewport.ts`). A 4K
+  window renders at ~2300x1300. Raising `QUALITY.maxPixels` is the quickest way
+  to make this scene slow on a big monitor.
 
 ## Working with the owner
 

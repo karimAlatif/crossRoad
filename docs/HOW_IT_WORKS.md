@@ -249,6 +249,61 @@ not a scroll, not something calling `attachControl` later, not even code setting
 `camera.alpha` directly. Set `CAMERA.locked` to `false` if you ever want it to
 let go.
 
+### Every screen gets the same shot
+
+A phone held upright and a 21:9 monitor cannot show the same picture through the
+same lens. With a fixed lens the *vertical* angle is what stays constant, so the
+narrower the screen the less of the world fits across it — and a view framed on a
+desktop quietly loses the sides of the junction on a phone.
+
+So the framing is a promise, not a lens setting. `CAMERA.frame` is an area — in
+metres, on the plane through the view's target — that is visible on every screen,
+and the camera does whatever it has to in order to keep it:
+
+1. **It opens the lens.** Free, and it moves nothing: same spot, same angle, same
+   distance, same fog. The same shot with a wider edge.
+2. **Then, only if that is not enough, it steps back.** Straight out along the
+   same line, so the angle and the composition hold and the junction just sits a
+   little further away. The tilt-shift follows the camera's distance on its own,
+   so it stays focused on the junction.
+
+The lens stops opening at `frame.maxFov` because this camera looks down at 37°:
+past about 74° the top of the frame climbs over the horizon and the shot fills up
+with empty sky. That is the point where distance takes over.
+
+The defaults are measured. The junction's four corner poles need 49.8 x 30.4 m
+from this view, and a 16:9 screen already shows 66.9 x 37.6 m — so every ordinary
+screen keeps the authored view untouched, and only tall ones do any work:
+
+| screen | lens | distance |
+|---|---|---|
+| 1080p, 4K, 21:9, laptop, iPad landscape, phone landscape | 41.3° | 50 m |
+| iPad portrait (3:4) | 67.4° | 50 m |
+| phone portrait (9:16) | 72° | 62 m |
+| phone portrait (tall, 9:19.5) | 72° | 75 m |
+
+Rotating mid-game is handled the same way, including mid-intro: the lens follows
+immediately, and the opening lands on — and pins to — whatever the screen has
+become.
+
+### And the right number of pixels
+
+`core/viewport.ts` is the one place that answers the canvas. On every size change
+it settles three things in one pass: how many pixels to render, the engine's idea
+of its own size, and the framing above.
+
+It watches with a `ResizeObserver` on the canvas rather than `window.resize`,
+because the canvas changes size for reasons the window knows nothing about — a
+rotated phone, an address bar sliding away, a devtools pane. The work is
+coalesced into the next animation frame, because a drag-resize fires in bursts
+and every `engine.resize()` reallocates the post stack's render targets.
+
+The resolution is the smallest of three limits: the display's own pixel ratio,
+`QUALITY.maxPixelRatio`, and `QUALITY.maxPixels` — a flat budget on the total.
+That last one is what protects a 4K monitor, which would otherwise ask for four
+times the shading of a 1080p one for a scene that is already fill-rate bound. A
+maximised 4K window renders at about 2300 x 1300 and is then scaled up.
+
 ---
 
 ## 7. A car
@@ -401,6 +456,8 @@ downloaded during loading and decoded on that click.
 | crashes | `CRASH` |
 | sound | `SOUND` |
 | the view, and the opening shot | `CAMERA.view`, `CAMERA.intro` |
+| what stays in frame on a phone | `CAMERA.frame` |
+| render resolution on big screens | `QUALITY.maxPixels`, `maxPixelRatio` |
 
 ---
 

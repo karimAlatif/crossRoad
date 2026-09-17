@@ -101,12 +101,18 @@ export function createPostProcess(scene: Scene, clock: Clock, camera: ArcRotateC
   ip.vignetteCameraFov = camera.fov;
   ip.vignetteColor = new Color4(0.05, 0.06, 0.12, 0);
 
-  // Keep the junction pin-sharp however far the player dollies out.
-  const stopFocus = QUALITY.depthOfField
-    ? clock.each(() => {
-        pipeline.depthOfField.focusDistance = camera.radius * 1000;
-      })
-    : null;
+  // Both the camera's distance and its lens answer to the screen the game is on
+  // (see `camera.ts#fitToScreen`), and two effects here are drawn in their terms:
+  // the tilt-shift focuses at the camera's radius, and the vignette is shaped by
+  // its field of view. One tick keeps both honest, and the lens is compared
+  // before it is written because assigning it rebuilds the grade's uniforms.
+  let lens = camera.fov;
+  const stopFollow = clock.each(() => {
+    if (QUALITY.depthOfField) pipeline.depthOfField.focusDistance = camera.radius * 1000;
+    if (camera.fov === lens) return;
+    lens = camera.fov;
+    ip.vignetteCameraFov = lens;
+  });
 
   return {
     pipeline,
@@ -125,7 +131,7 @@ export function createPostProcess(scene: Scene, clock: Clock, camera: ArcRotateC
       else manager.detachCamerasFromRenderPipeline("ssao", camera);
     },
     dispose: () => {
-      stopFocus?.();
+      stopFollow();
       ssao?.dispose();
       pipeline.dispose();
     },
