@@ -154,7 +154,7 @@ export const SKY = {
 export const FOG = {
   enabled: true,
   color: new Color3(0.05, 0.07, 0.14),
-  density: 0.011,
+  density: 0.0095,
 };
 
 /** Matches the sky horizon, so any sliver the dome misses is invisible. */
@@ -253,7 +253,7 @@ export const ROAD_ONE = {
    * cars a row and a wave is plainly a group; at 40 it holds two, and a wave of
    * eight is spread over more road than exists.
    */
-  spawnGap: { min: 2, max: 30 },
+  spawnGap: { min: 2, max: 26 },
 };
 
 /**
