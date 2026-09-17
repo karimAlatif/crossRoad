@@ -176,7 +176,7 @@ export const POST = {
  *  baked into `Emissive_01.jpg`. We put it back — this is the night-window /
  *  neon-sign sparkle that bloom then picks up. */
 export const EMISSIVE_REVIVE = new Color3(1, 0.87, 0.62);
-export const EMISSIVE_STRENGTH = 1.25;
+export const EMISSIVE_STRENGTH = 2.5;
 
 /* -------------------------------------------------------------------- props -- */
 
@@ -281,11 +281,11 @@ export const ROAD_TWO = {
 
 export const CRASH = {
   /** How long a wreck spins in the road, blocking it, before it poofs away. */
-  holdSeconds: 1,
+  holdSeconds: .4,
   poofSeconds: 0.45,
-  spin: { min: 1.5, max: 3 },
+  spin: { min: 1.5, max: 4 },
   hop: { min: 2.8, max: 5.2 },
-  gravity: 15,
+  gravity: .25,
   bounce: 0.45,
   /**
    * The spray of sparks thrown out on impact.
@@ -300,9 +300,9 @@ export const CRASH = {
 export const LIGHT = {
   poleHeight: 4.6,
   head: { width: 1.6, height: 3.0, depth: 0.26 },
-  lampSize: 0.86,
+  lampSize: 0.9,
   lampGap: 0.68,
-  haloSize: 3.6,
+  haloSize: 1.6,
   red: new Color3(1, 0.17, 0.22),
   green: new Color3(0.32, 1, 0.38),
   /** Emissive level of the lit lamp versus the dark one. */
@@ -756,7 +756,7 @@ export const STREET_LAMP = {
    *
    *   height  how far off the ground it lies — enough to clear a kerb
    */
-  pool: { size: 9, height: 0.12, brightness: 0.62 },
+  pool: { size: 12, height: 0.12, brightness: 0.62 },
 
   /**
    * Lamps on their way out. Same idea as the cars' headlamps, but slower and
@@ -771,7 +771,7 @@ export const STREET_LAMP = {
    *   rate    on-off flickers per second during a bout
    */
   flicker: {
-    lamps: 0.3,
+    lamps: 0.5,
     steady: { min: 3, max: 11 },
     stutter: { min: 0.2, max: 0.9 },
     rate: 9,
