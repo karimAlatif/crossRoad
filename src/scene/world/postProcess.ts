@@ -11,7 +11,7 @@ import {
 import { POST } from "../config";
 import type { Clock } from "../core/frame";
 import type { Disposable } from "../core/types";
-import { graphics } from "../quality";
+import { graphics, mobileLift } from "../quality";
 
 export type PostFx = Disposable & {
   pipeline: DefaultRenderingPipeline;
@@ -56,7 +56,7 @@ export function createPostProcess(scene: Scene, clock: Clock, camera: ArcRotateC
   const ip = pipeline.imageProcessing;
   ip.toneMappingEnabled = true;
   ip.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
-  ip.exposure = POST.image.exposure;
+  ip.exposure = POST.image.exposure * mobileLift("exposure");
   ip.contrast = POST.image.contrast;
 
   const curves = new ColorCurves();

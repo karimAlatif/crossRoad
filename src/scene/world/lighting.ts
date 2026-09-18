@@ -10,7 +10,7 @@ import {
 } from "@babylonjs/core";
 import { FILL, SUN } from "../config";
 import { receiveShadows } from "../core/visuals";
-import { graphics } from "../quality";
+import { graphics, mobileLift } from "../quality";
 
 export type Lighting = {
   sun: DirectionalLight;
@@ -48,7 +48,7 @@ export function createLighting(scene: Scene, sunDirection: Vector3): Lighting {
   fill.diffuse = FILL.skyColor;
   fill.groundColor = FILL.groundColor;
   fill.specular.set(0, 0, 0);
-  fill.intensity = FILL.intensity;
+  fill.intensity = FILL.intensity * mobileLift("fill");
 
   const wanted = graphics.shadows;
   const shadows = wanted.cascades > 0 ? shadowPass(sun, wanted) : null;

@@ -9,6 +9,7 @@ import {
   type Scene,
 } from "@babylonjs/core";
 import { AMBIENT } from "../config";
+import { mobileLift } from "../quality";
 
 /**
  * The light the world itself gives off.
@@ -108,7 +109,7 @@ export function createAmbient(scene: Scene): BaseTexture {
   cube.sphericalPolynomial = SphericalPolynomial.FromHarmonics(harmonics);
 
   scene.environmentTexture = cube;
-  scene.environmentIntensity = intensity;
+  scene.environmentIntensity = intensity * mobileLift("ambient");
   return cube;
 }
 

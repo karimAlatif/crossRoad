@@ -1,5 +1,5 @@
 import type { Engine } from "@babylonjs/core";
-import { GRAPHICS, type GraphicsLevel, type GraphicsSettings } from "./config";
+import { GRAPHICS, MOBILE_LIGHT, type GraphicsLevel, type GraphicsSettings } from "./config";
 import type { Clock } from "./core/frame";
 
 /**
@@ -67,7 +67,7 @@ export function chooseLevel(engine: Engine): GraphicsLevel {
 
   const cores = navigator.hardwareConcurrency || 4;
   const memory = (navigator as { deviceMemory?: number }).deviceMemory ?? 4;
-  const phone = matchMedia("(pointer: coarse)").matches && !matchMedia("(pointer: fine)").matches;
+  const phone = onTouchScreen();
 
   // Apple's mobile GPUs are in a class of their own; an iPhone is not a low-end
   // device and treating it as one wastes a good screen.
@@ -228,6 +228,22 @@ function median(values: number[]): number {
   if (values.length === 0) return 0;
   const sorted = values.slice().sort((a, b) => a - b);
   return sorted[Math.floor(sorted.length / 2)];
+}
+
+/**
+ * Whether the game is on a phone or a tablet.
+ *
+ * A coarse pointer with no fine one is the honest test — a finger and nothing
+ * else — and far better than sniffing the user-agent, which lies. A laptop with a
+ * touch screen also has a trackpad, so it counts as a desktop, which it is.
+ */
+export function onTouchScreen(): boolean {
+  return matchMedia("(pointer: coarse)").matches && !matchMedia("(pointer: fine)").matches;
+}
+
+/** How much this part of the lighting is lifted on this device: 1 anywhere but a phone. */
+export function mobileLift(part: keyof typeof MOBILE_LIGHT): number {
+  return onTouchScreen() ? MOBILE_LIGHT[part] : 1;
 }
 
 /** Longer than this between frames is a pause, not a slow device. */

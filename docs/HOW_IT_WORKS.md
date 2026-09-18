@@ -621,6 +621,18 @@ And **three real lights in the whole scene** is the limit: the sun, the fill, an
 one spill on the signal. Everything else that glows is flat geometry that adds
 itself to the picture.
 
+**Phones get a lift** (`MOBILE_LIGHT`). The same scene reads darker on a phone
+than on a monitor. Measured, identically lit, the upright phone view averages
+14% darker than the desktop one, because it shows more dark rooftop in the
+foreground and more road fading into the fog. Then the phone takes more away:
+a small screen in a lit room or outdoors, often an OLED panel that turns the
+darkest blues to black, often with auto-brightness down. So on a touch screen
+the fill, the ambient and the exposure are multiplied up — measured, the phone
+view goes from 57 to 69 on a 0–255 scale, a little brighter than the desktop's
+66, which is what makes up for the screen. A desktop, or a laptop that has a
+trackpad as well as a touch screen, is untouched: the values above stay the ones
+you tune by eye on a monitor.
+
 This is not a shortcut, it is the reason it runs: a Babylon light costs per
 *material*, so thirty headlights would recompile every shader in the city and
 then be paid for on every pixel of every surface.
@@ -712,6 +724,7 @@ downloaded during loading and decoded on that click.
 | the signal's look and timing | `LIGHT` |
 | **how bright the scene is** | `AMBIENT.intensity`, then `FILL.intensity` |
 | the streets specifically | `CITY_MATERIALS.roadTint` |
+| how much brighter phones are | `MOBILE_LIGHT` |
 | night colour, fog, sky | `FOG`, `SKY`, `SUN`, `FILL`, `CLEAR_COLOR` |
 | bloom, contrast, depth of field | `POST` |
 | what each class of device gets | `GRAPHICS.levels` |

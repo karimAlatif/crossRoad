@@ -216,10 +216,14 @@ is invisible" rather than an error.
     reflections — and a near-black road texture. `city.ts` clamps metallic and
     lifts the road albedo (`CITY_MATERIALS`). If the city ever looks flat and
     dark again after a re-export, check those first.
-26. **Lighting is deliberately not tiered.** The graphics levels change what is
-    *drawn*, never how bright it is: measured, high and low differ by 0.1%. A
-    level that changed the exposure or the ambient would mean the game looked
-    different on different phones, which is the problem this all came from.
+26. **Lighting is deliberately not tiered by graphics level.** The levels change
+    what is *drawn*, never how bright it is: measured, high and low differ by
+    0.1%. Brightness does change by **device class**, on purpose:
+    `MOBILE_LIGHT` multiplies the fill, the ambient and the exposure on a touch
+    screen (`quality.ts#onTouchScreen` — coarse pointer and no fine one), because
+    the upright phone view measures 14% darker than desktop before the screen
+    itself is counted. Keep the two apart: a weak desktop must not get brighter,
+    and a strong phone must.
 27. **The cross traffic's design lives in `flow.ts`**, and its top comment is
     the spec. Runs with gaps after them, two rows on independent rhythms, a
     speed per car clamped so nothing can catch the car ahead, and a road that

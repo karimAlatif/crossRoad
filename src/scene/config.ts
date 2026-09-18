@@ -190,7 +190,7 @@ export const SUN = {
 export const FILL = {
   skyColor: new Color3(0.24, 0.3, 0.46),
   groundColor: new Color3(0.12, 0.12, 0.16),
-  intensity: 0.65,
+  intensity: 0.55,
 } as const;
 
 export const SKY = {
@@ -236,6 +236,32 @@ export const AMBIENT = {
   ground: new Color3(0.05, 0.05, 0.07),
   intensity: 1,
   size: 64,
+};
+
+/**
+ * A lift for phones and tablets, on top of all the lighting above.
+ *
+ * The same scene reads darker on a phone than on a monitor, and not only because
+ * of the screen. Measured, identically lit, the upright phone view averages 14%
+ * darker than the desktop one: it shows more of the dark rooftops in the
+ * foreground and more of the road fading into the fog. Then the phone itself
+ * takes more away — a small screen, looked at in a lit room or outdoors, often
+ * on an OLED panel that turns the darkest blues to plain black, and often with
+ * auto-brightness turned down.
+ *
+ * So on a touch screen these multiply the lighting above. A desktop, or a laptop
+ * that happens to have a touch screen as well as a trackpad, is untouched, so the
+ * values above stay the ones you tune by eye on a monitor.
+ *
+ *   fill      multiplies FILL.intensity — the light on the roads from above
+ *   ambient   multiplies AMBIENT.intensity — the light the whole city gives off
+ *   exposure  multiplies POST.image.exposure — everything at once, windows too.
+ *             Kept small, because it is the one that can blow the highlights
+ */
+export const MOBILE_LIGHT = {
+  fill: 1.4,
+  ambient: 1.3,
+  exposure: 1.1,
 };
 
 /** Haze that dissolves the far city and keeps the eye on the junction. */
@@ -297,7 +323,7 @@ export const EMISSIVE_STRENGTH = 2.8;
 export const CITY_MATERIALS = {
   maxMetallic: 0.08,
   minRoughness: 0.8,
-  roadTint: 2,
+  roadTint: 1.6,
 };
 
 /* -------------------------------------------------------------------- props -- */
@@ -1071,7 +1097,7 @@ export const HEADLIGHT = {
    *          all but disappears.
    *   brightness 0 to 1
    */
-  lamp: { size: 0.8, apart: 0.64, tilt: 1, brightness: 1 },
+  lamp: { size: 0.8, apart: 0.64, tilt: 1, brightness: 1.5 },
 
   /**
    * A dodgy connection on a few cars: their headlamps stutter on and off.
