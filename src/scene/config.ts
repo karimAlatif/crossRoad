@@ -37,10 +37,36 @@ export const CAMERA = {
    * the point everything orbits.
    */
   view: {
-    target: new Vector3(-4, 0, 2),
+    target: new Vector3(-3, 0, 2),
     alpha: 254,
     beta: 53,
     radius: 50,
+  },
+
+  /**
+   * The same shot, composed for a screen held upright — a phone, a tablet on its
+   * end. Same units as `view`, and every field is yours: phones follow this
+   * object exactly the way wide screens follow `view`.
+   *
+   * It needs its own because a composition does not survive the change of
+   * shape. `view.target` sits off to one side of the junction, which is a fine
+   * way to use the spare width of a monitor and a poor way to use a phone's,
+   * where width is the one thing there is none of. The default target is the
+   * junction's own centre — measured from its crossing poles — so a tall screen
+   * can frame it tightly without losing either edge.
+   *
+   * Screens between the two shapes blend the two views smoothly — target, angles
+   * and distance alike — from fully this at 3:4 and taller to fully `view` at
+   * 16:10 and wider, so turning a tablet never makes the camera jump. The lens
+   * and distance then adapt on top of whichever view is in force (see `frame`),
+   * so a 9:16 phone and a 9:21 one both end up as close to this as their shape
+   * allows.
+   */
+  portraitView: {
+    target: new Vector3(1, 0, 10),
+    alpha: 250,
+    beta: 60,
+    radius: 55,
   },
 
   minZ: 0.8,
@@ -72,16 +98,13 @@ export const CAMERA = {
    *
    *   width          metres across, at the view's target, that a wide screen
    *                  shows. The desktop framing
-   *   portraitWidth  metres across that a tall screen must fit: the junction
-   *                  corner to corner, and not a lot more. On a tall screen the
-   *                  camera also aims at the junction's own centre rather than
-   *                  `view.target`, which is a wide-screen composition and sits
-   *                  off to one side — so the junction is framed tightly without
-   *                  losing an edge. Lower is closer: at 35 it fills 86% of an
-   *                  upright phone's width with the signal and the first waiting
-   *                  cars still in view; much below 33 the queue starts to leave
-   *                  the frame. Screens between the two shapes blend smoothly, so
-   *                  rotating a tablet never jumps
+   *   portraitWidth  metres across that a tall screen must fit, around
+   *                  `portraitView.target`: the junction corner to corner, and not
+   *                  a lot more. Lower is closer: at 35 it fills 86% of an upright
+   *                  phone's width with the signal and the first waiting cars still
+   *                  in view; much below 33 the queue starts to leave the frame.
+   *                  Screens between the two shapes blend smoothly, so rotating a
+   *                  tablet never jumps
    *   height         metres top to bottom that any screen shows
    *   maxFov         the widest the lens may open, in degrees, before the camera
    *                  steps back instead. It looks down at 37°, so past about 74°
@@ -466,10 +489,10 @@ export const ROAD_TWO = {
 
 export const CRASH = {
   /** How long a wreck spins in the road, blocking it, before it poofs away. */
-  holdSeconds: .4,
-  poofSeconds: 0.45,
-  spin: { min: 1.5, max: 4 },
-  hop: { min: 2.8, max: 5.2 },
+  holdSeconds: .3,
+  poofSeconds: 0.35,
+  spin: { min: 2, max: 5 },
+  hop: { min: 3.8, max: 6.2 },
   gravity: .25,
   bounce: 0.45,
   /**

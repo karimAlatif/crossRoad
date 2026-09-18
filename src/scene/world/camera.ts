@@ -39,7 +39,6 @@ type Move = { stands: Key[]; looks: Key[]; seconds: number };
 export function createCamera(scene: Scene): ArcRotateCamera {
   framed = gameView();
   aim = CAMERA.view.target.clone();
-  junction = null;
   arrived = false;
   const view = framed;
   const camera = new ArcRotateCamera(
@@ -75,13 +74,10 @@ export function createCamera(scene: Scene): ArcRotateCamera {
 let framed: Shot = gameView();
 
 /**
- * Where the view looks, for this screen: the authored target on a wide screen,
- * the junction itself on a tall one. See `fitToScreen`.
+ * Where the view looks, for this screen: `view.target` on a wide screen,
+ * `portraitView.target` on a tall one, and a blend between. See `fitToScreen`.
  */
 let aim = CAMERA.view.target.clone();
-
-/** The junction's centre, once the city has loaded and it can be found. */
-let junction: Vector3 | null = null;
 
 /** Whether the intro has handed over — i.e. whether `framed` is live on screen. */
 let arrived = false;
@@ -123,41 +119,49 @@ export function fitToScreen(camera: ArcRotateCamera, engine: AbstractEngine): vo
   const { width, portraitWidth, height, maxFov } = CAMERA.frame;
   const aspect = Math.max(0.05, engine.getAspectRatio(camera));
 
-  // What has to fit across depends on the shape of the screen: the city on a
-  // wide one, the junction on a tall one, and a smooth blend between — so a
-  // tablet turning on its side changes the framing gradually, never in a jump.
+  // Which authored view is in force depends on the shape of the screen:
+  // `view` on a wide one, `portraitView` on a tall one, and a smooth blend of the
+  // two between — so a tablet turning on its side changes the shot gradually,
+  // never in a jump. So does how much has to fit across: the city on a wide
+  // screen, the junction on a tall one.
   const wide = landscape(aspect);
+  const shot = authored(wide);
   const across = portraitWidth + (width - portraitWidth) * wide;
   const need = Math.max(height / 2, across / 2 / aspect);
 
-  // And so does where it looks. The authored target is a composition for a wide
-  // screen, and it sits off the junction's centre — which on a tall screen means
-  // spending the scarce width on the empty side. So as the screen narrows the
-  // aim slides onto the junction itself, and the junction can be framed tightly
-  // without losing either edge.
-  Vector3.LerpToRef(junction ?? CAMERA.view.target, CAMERA.view.target, wide, aim);
-
-  const wanted = 2 * Math.atan(need / CAMERA.view.radius);
+  // Then the lens and the distance adapt, on top of that view, to this exact
+  // screen — which is what makes every phone come out as close to the portrait
+  // view as its shape allows, rather than each one the same by accident.
+  const wanted = 2 * Math.atan(need / shot.radius);
   // Never tighter than the authored lens, never wider than the guard.
   const fov = Math.max(CAMERA.fov * DEG, Math.min(wanted, maxFov * DEG));
   camera.fov = fov;
 
-  framed = { ...gameView(), radius: Math.max(CAMERA.view.radius, need / Math.tan(fov / 2)) };
+  framed = { ...shot, radius: Math.max(shot.radius, need / Math.tan(fov / 2)) };
   // A resize after the intro: the camera is already sitting at the old distance,
   // so move it to the new one and close the limits again.
   if (arrived) pin(camera);
 }
 
 /**
- * Tells the framing where the junction is, and reframes.
+ * The authored view for a screen this landscape: `portraitView` at 0, `view` at 1,
+ * blended between — and it writes the target into `aim` as it goes.
  *
- * The junction is found from the model's crossing poles, so it is only known once
- * the city has loaded — after the camera already exists and has been framed
- * once. Called before the intro starts, so the opening lands on the right shot.
+ * The swing is blended the short way round, so two views authored at 350° and
+ * 10° meet at 0° rather than sweeping the long way through 180°.
  */
-export function frameJunction(camera: ArcRotateCamera, engine: AbstractEngine, centre: Vector3): void {
-  junction = centre.clone();
-  fitToScreen(camera, engine);
+function authored(wide: number): Shot {
+  const tall = CAMERA.portraitView;
+  const view = CAMERA.view;
+  Vector3.LerpToRef(tall.target, view.target, wide, aim);
+
+  const from = tall.alpha;
+  const to = from + ((((view.alpha - from) % 360) + 540) % 360) - 180;
+  return {
+    alpha: (from + (to - from) * wide) * DEG,
+    beta: (tall.beta + (view.beta - tall.beta) * wide) * DEG,
+    radius: tall.radius + (view.radius - tall.radius) * wide,
+  };
 }
 
 /**

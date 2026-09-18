@@ -161,10 +161,13 @@ is invisible" rather than an error.
     new code that wants "the view" wants `framed` and `aim`, not the config.
     What has to fit across blends from `frame.portraitWidth` (aspect ≤ 0.75) to
     `frame.width` (aspect ≥ 1.6): a single width cannot make both a desktop and
-    an upright phone look right. The aim blends the same way, from the junction's
-    centre (`frameJunction`, called once the city has loaded and before the
-    intro) to `view.target` — the authored target is off-centre, and on a tall
-    screen that wasted the width the tight framing needs. `CAMERA.fov` and `frame.maxFov` are in
+    an upright phone look right. The *view itself* blends the same way, between
+    two authored objects: `CAMERA.portraitView` on tall screens and `CAMERA.view`
+    on wide ones (`authored()` in `camera.ts`; alpha blends the short way round).
+    Both are the owner's to edit, and phones must follow `portraitView` exactly —
+    an earlier version aimed tall screens at the junction automatically, which
+    silently overrode the owner's target on phones. Do not add hidden aiming
+    again; change the authored default instead. `CAMERA.fov` and `frame.maxFov` are in
     **degrees**; `maxFov` used to be radians, the owner wrote 120 meaning
     degrees, and phones got a 121° fisheye.
 18. **Only `core/viewport.ts` answers the canvas.** One `ResizeObserver` on the

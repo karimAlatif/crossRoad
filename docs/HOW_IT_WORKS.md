@@ -368,13 +368,28 @@ turning a tablet on its side never makes the framing jump. The extra height a
 tall screen shows is a gift rather than a waste: it is more of the cross traffic
 coming, which is exactly what the player is reading.
 
-**A tall screen also aims at the junction.** `view.target` is a composition for a
-wide screen, and it sits off to one side of the junction — harmless when there is
-width to spare, but on a phone it spends the scarce width on the empty side, so
-the junction could not be framed tightly without losing an edge. So as the screen
-narrows, the point the camera looks at slides from `view.target` onto the
-junction's own centre (found from the crossing poles, so it follows the model).
-The angle never changes; only where it points.
+**Tall screens have a view of their own: `CAMERA.portraitView`.** It has the same
+four fields as `view` — target, alpha, beta, radius — and phones follow it
+exactly the way wide screens follow `view`. A composition does not survive a
+change of shape: `view.target` sits off to one side of the junction, a fine use
+of a monitor's spare width and a poor use of a phone's, where width is the one
+thing there is none of. So the portrait view is authored separately. Its default
+target is the junction's own centre, measured from the crossing poles, so a tall
+screen can frame the junction tightly without losing either edge.
+
+Screens between the two shapes blend the two views — target, angles and distance
+together, the swing the short way round — from fully `portraitView` at 3:4 and
+taller to fully `view` at 16:10 and wider, so turning a tablet never makes the
+camera jump. The lens and distance then adapt *on top of* whichever view is in
+force, to that exact screen: a 9:16 phone and a 9:19.5 one both come out as close
+to the portrait view as their shape allows. The authored `radius` is the
+closest the camera will be; a narrower phone can still step back further if
+`portraitWidth` will not otherwise fit across it.
+
+Measured by moving `portraitView` to target `(-20, 0, 2)`, alpha 240, beta 50,
+radius 44 and reading where the camera ended up: every portrait screen aimed at
+exactly `(-20, 0, 2)` at 240° and 50°, the iPad at exactly 44 m and the phones a
+little further back for their shape — and the desktop did not move at all.
 
 Measured at `width` 82 and `portraitWidth` 35 — how much of the screen the
 junction itself fills is what tells you whether the view reads as "the same":
