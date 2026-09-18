@@ -420,7 +420,7 @@ export const ROAD_ONE = {
   clear: {
     seconds: {
       easy: { min: 5.0, max: 7.0 },
-      hard: { min: 1.6, max: 2 },
+      hard: { min: .25, max: .4 },
     },
     every: {
       easy: { min: 6, max: 10 },
