@@ -354,20 +354,47 @@ and the camera does whatever it has to in order to keep it:
    little further away. The tilt-shift follows the camera's distance on its own,
    so it stays focused on the junction.
 
-The lens stops opening at `frame.maxFov` because this camera looks down at 37°:
-past about 74° the top of the frame climbs over the horizon and the shot fills up
-with empty sky. That is the point where distance takes over.
+The lens stops opening at `frame.maxFov` — in **degrees**, like the view's own
+angles — because this camera looks down at 37°: past about 74° the top of the
+frame climbs over the horizon into empty sky, and well before that a wide lens
+starts to look like a fisheye. That is the point where distance takes over.
 
-The defaults are measured. The junction's four corner poles need 49.8 x 30.4 m
-from this view, and a 16:9 screen already shows 66.9 x 37.6 m — so every ordinary
-screen keeps the authored view untouched, and only tall ones do any work:
+**One width cannot serve both shapes of screen.** Enough city to fill a wide
+monitor, guaranteed across a phone held upright, means showing the world three or
+four times taller than it is wide — and everything shrinks. So `frame.width` is
+what a *wide* screen shows across, and `frame.portraitWidth` is what a *tall* one
+must fit: the junction, and not much more. Screens in between blend smoothly, so
+turning a tablet on its side never makes the framing jump. The extra height a
+tall screen shows is a gift rather than a waste: it is more of the cross traffic
+coming, which is exactly what the player is reading.
 
-| screen | lens | distance |
-|---|---|---|
-| 1080p, 4K, 21:9, laptop, iPad landscape, phone landscape | 41.3° | 50 m |
-| iPad portrait (3:4) | 67.4° | 50 m |
-| phone portrait (9:16) | 72° | 62 m |
-| phone portrait (tall, 9:19.5) | 72° | 75 m |
+**A tall screen also aims at the junction.** `view.target` is a composition for a
+wide screen, and it sits off to one side of the junction — harmless when there is
+width to spare, but on a phone it spends the scarce width on the empty side, so
+the junction could not be framed tightly without losing an edge. So as the screen
+narrows, the point the camera looks at slides from `view.target` onto the
+junction's own centre (found from the crossing poles, so it follows the model).
+The angle never changes; only where it points.
+
+Measured at `width` 82 and `portraitWidth` 35 — how much of the screen the
+junction itself fills is what tells you whether the view reads as "the same":
+
+| screen | lens | distance | junction fills |
+|---|---|---|---|
+| 1080p, 4K, laptop | 49.5° | 50 m | 39% wide, 52% tall |
+| iPad landscape (4:3) | 56° | 50 m | 45% wide, 45% tall |
+| iPad portrait (3:4) | 50° | 50 m | 88% wide, 53% tall |
+| phone portrait (9:16) | 64° | 50 m | 88% wide, 40% tall |
+| phone portrait (tall, 9:19.5) | 70° | 54 m | 86% wide, 32% tall |
+
+Before `portraitWidth` existed — one width of 82 for every screen, and a lens
+cap that had been written in degrees but was read as radians, so it was no cap at
+all — a phone held upright opened the lens to **121°** and the junction filled
+**13%** of the screen's height. That was the "too far away on phones".
+
+Lower `portraitWidth` is closer. At 35 the signal and the first waiting cars are
+still in view on the left; at 33 the queue starts to leave the frame, and that is
+the player's own traffic, so 35 is about as close as it should go.
 
 Rotating mid-game is handled the same way, including mid-intro: the lens follows
 immediately, and the opening lands on — and pins to — whatever the screen has

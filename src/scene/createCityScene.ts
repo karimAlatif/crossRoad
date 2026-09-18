@@ -7,7 +7,7 @@ import {
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF/2.0";
 
-import { createCamera, fitToScreen, playIntro, readCameraPath } from "./world/camera";
+import { createCamera, fitToScreen, frameJunction, playIntro, readCameraPath } from "./world/camera";
 import { loadCity, type LoadProgress } from "./world/city";
 import { createEnvironment } from "./world/environment";
 import { createLighting, registerShadowCasters } from "./world/lighting";
@@ -129,6 +129,9 @@ export async function createCityScene(
     traffic.update(dt, light.isGreen());
   });
 
+  // The junction is only known now the city is in, and a tall screen frames
+  // around it — so reframe before the opening shot works out where it ends.
+  frameJunction(camera, engine, city.crossroad);
   playIntro(camera, clock, readCameraPath(scene));
 
   const render = () => scene.render();

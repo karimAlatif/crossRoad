@@ -47,43 +47,53 @@ export const CAMERA = {
   maxZ: 900,
 
   /**
-   * The lens, in radians, on a screen wide enough not to need any help. This is
-   * the tightest the camera will ever be; `frame` below only ever widens it.
+   * The lens, in degrees — the vertical angle — on a screen wide enough not to
+   * need any help. This is the tightest the camera will ever be; `frame` below
+   * only ever widens it.
    */
-  fov: 0.72,
+  fov: 41,
 
   /**
    * What must stay in shot, whatever the screen.
    *
-   * A phone in portrait and a 21:9 monitor cannot show the same picture: with a
-   * fixed lens, the narrower the screen the less of the world fits across it, so
-   * a view framed on a desktop loses the sides of the junction on a phone.
+   * A phone held upright and a 21:9 monitor cannot show the same picture: with a
+   * fixed lens, the narrower the screen the less of the world fits across it. So
+   * the frame is fixed and the camera adapts to it — by opening the lens first,
+   * which moves nothing, and then, if that is not enough, by stepping straight
+   * back along the same line.
    *
-   * So the *frame* is fixed and the camera adapts to it. `width` and `height`
-   * are metres, measured on the plane through `view.target` — the area the
-   * camera guarantees to show, whatever it is running on.
+   * The catch is that one width cannot serve both shapes. Enough city to fill a
+   * wide monitor, guaranteed across a phone held upright, means showing the world
+   * three or four times taller than it is wide — and everything shrinks until the
+   * junction is a tile in the middle of the screen. A tall screen has height to
+   * spare and width to none, so what it has to fit across is the *junction*, not
+   * the city; and the extra height it shows is a gift, because it is more of the
+   * cross traffic coming, which is the thing the player is actually reading.
    *
-   * It is kept two ways, in this order. First the lens opens, which costs
-   * nothing and moves nothing: same spot, same angle, same distance, the same
-   * shot with a wider edge. Then, only if that is not enough, the camera steps
-   * straight back along the same line, which holds the angle and the composition
-   * and simply puts the junction a little further away.
-   *
-   * The defaults are measured, not guessed: the junction's four corner poles
-   * need 49.8 x 30.4 m from this view, and a 16:9 screen shows 66.9 x 37.6 m. So
-   * anything 4:3 or wider is already covered and changes nothing at all; a
-   * tablet held upright opens the lens; a phone held upright opens it to the cap
-   * and then steps back.
-   *
-   *   maxFov  how far the lens may open before distance takes over. The camera
-   *           looks down at 37°, so past about 74° the top of the frame climbs
-   *           over the horizon and the shot fills with sky — 1.25 rad (72°)
-   *           stops just short of that
+   *   width          metres across, at the view's target, that a wide screen
+   *                  shows. The desktop framing
+   *   portraitWidth  metres across that a tall screen must fit: the junction
+   *                  corner to corner, and not a lot more. On a tall screen the
+   *                  camera also aims at the junction's own centre rather than
+   *                  `view.target`, which is a wide-screen composition and sits
+   *                  off to one side — so the junction is framed tightly without
+   *                  losing an edge. Lower is closer: at 35 it fills 86% of an
+   *                  upright phone's width with the signal and the first waiting
+   *                  cars still in view; much below 33 the queue starts to leave
+   *                  the frame. Screens between the two shapes blend smoothly, so
+   *                  rotating a tablet never jumps
+   *   height         metres top to bottom that any screen shows
+   *   maxFov         the widest the lens may open, in degrees, before the camera
+   *                  steps back instead. It looks down at 37°, so past about 74°
+   *                  the top of the frame climbs over the horizon into sky — and
+   *                  well before that a wide lens starts to look like a fisheye,
+   *                  which is what "too far away" on a phone really was
    */
   frame: {
     width: 82,
+    portraitWidth: 35,
     height: 32,
-    maxFov: 120,
+    maxFov: 70,
   },
 
   /**
@@ -420,14 +430,14 @@ export const ROAD_ONE = {
   clear: {
     seconds: {
       easy: { min: 5.0, max: 7.0 },
-      hard: { min: .25, max: .4 },
+      hard: { min: .2, max: .4 },
     },
     every: {
       easy: { min: 6, max: 10 },
       hard: { min: 60, max: 80 },
     },
-    patience: { easy: 9, hard: 32 },
-    counts: 2.5,
+    patience: { easy: 9, hard: 35 },
+    counts: 1,
   },
 };
 

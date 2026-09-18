@@ -158,7 +158,15 @@ is invisible" rather than an error.
     horizon and fill with sky). It runs on every canvas resize, so the *effective*
     view is module state — `framed` in `camera.ts` — not `CAMERA.view`: the intro
     ends there, `pin` closes onto it, and a resize after the intro re-pins. Any
-    new code that wants "the view" wants `framed`, not the config.
+    new code that wants "the view" wants `framed` and `aim`, not the config.
+    What has to fit across blends from `frame.portraitWidth` (aspect ≤ 0.75) to
+    `frame.width` (aspect ≥ 1.6): a single width cannot make both a desktop and
+    an upright phone look right. The aim blends the same way, from the junction's
+    centre (`frameJunction`, called once the city has loaded and before the
+    intro) to `view.target` — the authored target is off-centre, and on a tall
+    screen that wasted the width the tight framing needs. `CAMERA.fov` and `frame.maxFov` are in
+    **degrees**; `maxFov` used to be radians, the owner wrote 120 meaning
+    degrees, and phones got a 121° fisheye.
 18. **Only `core/viewport.ts` answers the canvas.** One `ResizeObserver` on the
     canvas (not `window.resize` — the canvas resizes for reasons the window never
     hears about), coalesced into one animation frame, settling resolution,
