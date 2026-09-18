@@ -103,7 +103,7 @@ is invisible" rather than an error.
    direction reuses it. Do not "simplify" this back.
 7. **Instances own almost nothing.** `receiveShadows`, `applyFog` and materials
    belong to the source mesh; setting them per instance is ignored and warns once
-   per instance. `core/visuals.ts#plane` already handles this.
+   per instance. `core/visuals.ts#plane` and `#receiveShadows` handle this.
 8. **The traffic warms up for 25 simulated seconds synchronously** before the
    first frame, so the junction opens busy. Nothing "live" may happen during it:
    `traffic` gates clips on a `live` flag and `carEffects` gates everything on
@@ -173,11 +173,16 @@ is invisible" rather than an error.
     or you capture the level the module happened to load under.
 20. **Levels only take away.** A feature switched off in its own block stays off
     at every level: `graphics.smoke && CAR_FX.enabled`, never one or the other.
-21. **The governor drops a level but never raises one**, and only touches what
-    can change live: render scale, post flags, shadows on/off. Content decided at
-    build time — beams, ribbon pools, shadow map size — stays as built. When
-    adding a knob, put it in `GraphicsSettings` and give its owner an `apply()`
-    that re-reads `graphics`; `createCityScene` calls those in the governor.
+21. **The level may change once, during the intro, and never during play.**
+    `calibrate` listens to the opening shot (skipping the first hitchy moments),
+    takes the median frame, jumps straight to the level that fits from the
+    measured per-level costs, and unsubscribes — all before the camera settles,
+    so the change is masked by camera motion. An earlier version watched all
+    session and dropped levels live; the owner saw it as the whole scene
+    flickering mid-game. Do not bring back live quality changes. Only what can
+    change live is re-applied (render scale, post flags, shadows on/off); content
+    decided at build time stays as built. A new knob goes in `GraphicsSettings`
+    with an `apply()` on its owner, called from the `calibrate` callback.
 22. **Decide what to cut by measuring, not by looking.** Turning each feature off
     in turn (software renderer, fill-rate bound) gave: resolution 38%, bloom 8%,
     shadows 8%, glow 4.6%, road marks 2.2%, DoF 1.5%, and all sixty headlight
@@ -222,7 +227,21 @@ is invisible" rather than an error.
     the pool size.** Count transitions (`was <= line && is > line`) instead. This
     produced a confident "0 cars are getting through" that was entirely the
     measurement's fault.
-30. **`camera.position` is only recomputed when the view matrix is.** Reading it
+30. **Check which GPU the browser is actually using before believing a
+    performance report.** The dev machine is a laptop with an Intel UHD and an
+    RTX 4060, and Chrome runs on the Intel by default — `powerPreference:
+    "high-performance"` is ignored on Windows. "The quality drops on my PC" was
+    exactly that: 16 fps on the Intel, 92 on the card. To test on the real card,
+    launch the test Chrome with `--force_high_performance_gpu --use-angle=d3d11`
+    and without `--use-gl=swiftshader`; `engine.getGlInfo().renderer` names the
+    adapter. The console line from `quality.ts#announce` names it for users.
+31. **Never set `receiveShadows` on an instance** — use
+    `core/visuals.ts#receiveShadows`, which sets it on the source. An instance
+    owns no material state; Babylon warns once per instance, and the city plus
+    the car clones printed 65 warnings at every start. Earlier verification
+    scripts filtered that warning out, which is how it survived: do not filter
+    console output you have not read.
+32. **`camera.position` is only recomputed when the view matrix is.** Reading it
     in a headless harness that never renders gives a stale value — call
     `camera.getViewMatrix()` first. This produced a false "the camera never
     rises" reading once.

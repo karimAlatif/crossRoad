@@ -14,6 +14,7 @@ import { createCarClips, IDLE_LENGTH } from "./carAnimations";
 import { createCarEffects } from "../effects/carEffects";
 import type { Clock } from "../core/frame";
 import { between } from "../core/maths";
+import { receiveShadows } from "../core/visuals";
 import type { Disposable } from "../core/types";
 import { createHeadlights, lampMounts } from "../effects/carHeadlights";
 
@@ -169,7 +170,7 @@ export function createCarFactory(
     for (const part of parts) {
       part.isPickable = false;
       part.setEnabled(true);
-      part.receiveShadows = true;
+      receiveShadows(part);
     }
 
     // Measure while the rig hangs at the origin with no parent, so the numbers

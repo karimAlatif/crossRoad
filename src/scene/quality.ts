@@ -10,9 +10,10 @@ import type { Clock } from "./core/frame";
  * the scene is still being built — a shadow generator cannot be resized later,
  * and a headlight cone not built costs nothing forever.
  *
- * Then `watchFrameRate` measures. A guess from a renderer string is a guess; the
- * frame rate is a fact, and a device that cannot hold the rate gets dropped a
- * level whatever it claimed to be.
+ * Then `calibrate` measures, once, during the opening shot. A guess from a
+ * renderer string is a guess; the frame rate is a fact, and a device that cannot
+ * hold it gets a cheaper level whatever it claimed to be — but only then, and
+ * never again. See `calibrate` for why that matters more than it sounds.
  */
 
 /** The settings in force. Read it, never write it — `useLevel` owns it. */
@@ -20,6 +21,9 @@ export let graphics: GraphicsSettings = GRAPHICS.levels.high;
 
 /** Which level that is. */
 export let level: GraphicsLevel = "high";
+
+/** The GPU the browser is actually drawing with, as a person would name it. */
+let gpu = "";
 
 /** Cheapest first, which is also the order the governor walks backwards along. */
 const LADDER: GraphicsLevel[] = ["low", "medium", "high"];
@@ -31,11 +35,6 @@ export function useLevel(next: GraphicsLevel): GraphicsSettings {
   return graphics;
 }
 
-/** The level below this one, or null at the bottom. */
-export function levelBelow(of: GraphicsLevel): GraphicsLevel | null {
-  const at = LADDER.indexOf(of);
-  return at > 0 ? LADDER[at - 1] : null;
-}
 
 /**
  * What this device looks like it can take.
@@ -58,9 +57,10 @@ export function levelBelow(of: GraphicsLevel): GraphicsLevel | null {
  * back down, in full view of the player.
  */
 export function chooseLevel(engine: Engine): GraphicsLevel {
+  const renderer = rendererName(engine);
+  gpu = readable(renderer);
   if (GRAPHICS.force) return GRAPHICS.force;
 
-  const renderer = rendererName(engine);
   // Software rasterisers: nothing on this ladder makes them fast, but the bottom
   // rung at least keeps them moving.
   if (/swiftshader|llvmpipe|software|basic render/i.test(renderer)) return "low";
@@ -82,71 +82,165 @@ export function chooseLevel(engine: Engine): GraphicsLevel {
 }
 
 /**
- * Watches the frame rate and calls `struggling` when the device is not keeping
- * up — once per bad spell, never in the middle of one.
+ * Listens to the first seconds of the game, settles the graphics level once, and
+ * stops listening for good.
  *
- * It counts *slow frames* rather than averaging, because an average hides the
- * thing that actually ruins a game: a frame rate that is fine until a wave of
- * cars arrives. A spell is `windowSeconds` in which most frames missed the
- * target; `strikes` of those in a row and the caller is told.
+ * This used to be a governor that watched the whole session and dropped a level
+ * whenever two bad spells came in a row. It worked, and it was wrong: every drop
+ * rebuilds the bloom, switches off the tilt-shift and the shadows and changes the
+ * resolution, all in one frame, so the whole picture visibly lurched — in the
+ * middle of play, sometimes twice. Worse, it was listening from the very first
+ * frame, and the first frames of *any* game hitch while textures upload and the
+ * last shaders compile, so a perfectly good machine could talk itself down a
+ * level before the player had done anything.
  *
- * It times the frames itself rather than taking the clock's `dt`, for two
- * reasons. The clock clamps `dt` so that a long frame cannot teleport the
- * traffic — which would also flatten a 500 ms frame into a 50 ms one, hiding
- * exactly the device this is here to catch. And a window measured in clamped
- * time runs slower the worse things get: on a device at 5 fps a "four second"
- * window would take sixteen real seconds to fill, so the help would arrive last
- * where it was needed most.
+ * So now it listens during the opening shot and nowhere else:
  *
- * A gap longer than `PAUSE` is not a slow frame at all — it is a tab coming back
- * to the foreground, or a laptop waking up — and is thrown away rather than held
- * against the device.
+ *   - It **skips the first moments**, which hitch on every device and say
+ *     nothing about how fast this one is.
+ *   - It **judges the median frame**, not the worst ones. One slow frame is a
+ *     hiccup; a slow median is a slow device.
+ *   - It **picks the right level in one step**, from what each level was
+ *     measured to cost, rather than stepping down one at a time and being seen
+ *     twice.
+ *   - It **finishes before the camera settles**, so the change happens while
+ *     the whole view is moving anyway, and the game view the player actually
+ *     plays in is never repainted in front of them.
+ *
+ * Then it unsubscribes. Whatever it chose is the level for the session.
+ *
+ * `introSeconds` is how long the opening shot runs. Time here is the clock's,
+ * which is also the intro's, so on a slow device — where the clock runs behind
+ * real time — the listening still lines up with the camera move.
  */
-export function watchFrameRate(clock: Clock, struggling: () => boolean): () => void {
-  const { enabled, targetFps, windowSeconds, strikes } = GRAPHICS.adapt;
-  if (!enabled) return () => {};
+export function calibrate(
+  clock: Clock,
+  introSeconds: number,
+  settle: (next: GraphicsLevel) => void,
+): () => void {
+  const { enabled, targetFps, skip } = GRAPHICS.adapt;
+  // A pinned level is a decision already made. Second-guessing it would make
+  // `force` useless for the one thing it is for: seeing a level as it is.
+  if (!enabled || GRAPHICS.force) return () => {};
 
-  const budget = 1000 / targetFps;
+  // Stop a beat before the camera does, so the change has motion to hide in; but
+  // always listen for long enough to have a verdict worth acting on.
+  const until = Math.max(skip + MIN_LISTEN, introSeconds - SETTLE_MARGIN);
+  const frames: number[] = [];
+  let elapsed = 0;
   let last = performance.now();
-  let since = 0;
-  let frames = 0;
-  let slow = 0;
-  let bad = 0;
 
-  const stop = clock.each(() => {
+  const stop = clock.each((dt) => {
+    elapsed += dt;
     const now = performance.now();
     const gap = now - last;
     last = now;
-    if (gap > PAUSE) return;
 
-    since += gap;
-    frames++;
-    if (gap > budget) slow++;
-    if (since < windowSeconds * 1000) return;
+    if (elapsed < skip) return;
+    // A tab switched away and back is a pause, not a slow frame.
+    if (gap < PAUSE) frames.push(gap);
+    if (elapsed < until) return;
 
-    // More than half the window spent below the target counts as a bad spell.
-    const struggled = slow > frames / 2;
-    since = 0;
-    frames = 0;
-    slow = 0;
-
-    if (!struggled) {
-      // One good window wipes the slate: a single bad patch is not a verdict.
-      bad = 0;
-      return;
-    }
-
-    if (++bad < strikes) return;
-    bad = 0;
-    // Nothing left to give up — stop measuring rather than ask every window.
-    if (!struggling()) stop();
+    stop();
+    const typical = median(frames);
+    const next = fit(level, typical, 1000 / targetFps);
+    if (next === level) return;
+    report(level, next, typical, 1000 / targetFps);
+    settle(next);
   });
 
   return stop;
 }
 
+/**
+ * One line in the console saying what the game is drawing with and at what
+ * level, so "why does it look worse on my machine" has an answer that does not
+ * need a debugger.
+ */
+export function announce(): void {
+  console.info(`Graphics: ${level} on ${gpu || "an unnamed GPU"}${GRAPHICS.force ? " (pinned)" : ""}.`);
+}
+
+/**
+ * Why the level just went down — and, when the GPU is a built-in one, the fix
+ * that is almost always the real answer.
+ *
+ * Laptops with a dedicated graphics card still hand web browsers the built-in
+ * chip by default, to save battery, and a web page cannot choose otherwise:
+ * `powerPreference: "high-performance"` is a hint, and Chrome on Windows ignores
+ * it. Measured on an RTX 4060 laptop, the same scene ran at 92 fps on the card
+ * and 16 fps on the Intel chip Chrome had picked — so a lowered level on a
+ * built-in GPU is worth one sentence telling the player how to switch.
+ */
+function report(from: GraphicsLevel, to: GraphicsLevel, frameMs: number, budgetMs: number): void {
+  console.info(
+    `Graphics: lowered from ${from} to ${to} — frames took ${Math.round(frameMs)} ms during the ` +
+      `opening, against ${Math.round(budgetMs)} ms to hold ${GRAPHICS.adapt.targetFps} fps, on ${gpu || "this GPU"}.`,
+  );
+  if (BUILT_IN.test(gpu)) {
+    console.info(
+      "Graphics: that is a built-in graphics chip. If this machine also has a dedicated graphics card, " +
+        "set the browser to use it — Windows: Settings › System › Display › Graphics › your browser › " +
+        "High performance — then restart the browser.",
+    );
+  }
+}
+
+/** Renderer names that mean a GPU built into the processor rather than a card. */
+const BUILT_IN = /intel|uhd|iris|radeon\(tm\) graphics|radeon graphics|vega \d/i;
+
+/**
+ * "ANGLE (NVIDIA, NVIDIA GeForce RTX 4060 Laptop GPU (0x000028E0) Direct3D11
+ * vs_5_0 ps_5_0, D3D11)" is what Chrome reports; "NVIDIA GeForce RTX 4060 Laptop
+ * GPU" is what a person calls it.
+ */
+function readable(renderer: string): string {
+  const angle = /ANGLE \([^,]+, (.+?)(?: \(0x[0-9a-f]+\))?(?: Direct3D| OpenGL| Vulkan| Metal|,)/i.exec(renderer);
+  return (angle ? angle[1] : renderer).trim();
+}
+
+/**
+ * What each level costs to draw, relative to the top one. Measured on the same
+ * machine by timing each level's steady frame rate: medium runs at about 70% of
+ * high's frame time and low at about a third. Only the ratios matter here.
+ */
+const COST: Record<GraphicsLevel, number> = { high: 1, medium: 0.7, low: 0.33 };
+
+/**
+ * The best level that would hold the budget, given how long frames take at the
+ * current one.
+ *
+ * A little tolerance above the budget, because a browser capped at 30 fps — a
+ * laptop on battery, a power-saving mode — produces frames of exactly 33 ms that
+ * are perfectly smooth, and taking quality away from it would buy nothing: the
+ * cap is not ours to lift.
+ */
+function fit(current: GraphicsLevel, frameMs: number, budget: number): GraphicsLevel {
+  if (!(frameMs > budget * TOLERANCE)) return current;
+  for (let at = LADDER.indexOf(current); at >= 0; at--) {
+    const candidate = LADDER[at];
+    if ((frameMs * COST[candidate]) / COST[current] <= budget) return candidate;
+  }
+  return LADDER[0];
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = values.slice().sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
 /** Longer than this between frames is a pause, not a slow device. */
 const PAUSE = 2000;
+
+/** How far over the budget a median frame has to be before anything changes. */
+const TOLERANCE = 1.1;
+
+/** Seconds before the camera settles that the verdict is due. */
+const SETTLE_MARGIN = 0.5;
+
+/** Never judge on less than this many seconds of frames. */
+const MIN_LISTEN = 1.2;
 
 /** The GPU's own name, where the browser is willing to say. */
 function rendererName(engine: Engine): string {

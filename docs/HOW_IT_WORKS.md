@@ -362,13 +362,21 @@ A 2019 Android phone and a desktop with a graphics card are asked to draw the
 same city. `GRAPHICS` in the config holds three versions of the answer, and
 `quality.ts` decides which one this machine gets.
 
-**It guesses first, then measures.** The guess reads what the browser will admit
-to — the GPU's name, the core count, the memory, whether the pointer is a finger
-— and errs low on purpose: a strong phone that starts one level down looks good
-immediately, while a weak one that starts too high spends its first seconds
-visibly falling back. Then the scene watches its own frame rate. Two bad spells
-in a row and it gives up a level, whatever the guess said. It never climbs back:
-a picture that keeps changing looks worse than one that is simply a notch lower.
+**It guesses first, then measures — once.** The guess reads what the browser
+will admit to — the GPU's name, the core count, the memory, whether the pointer
+is a finger — and errs low on purpose. Then the opening shot doubles as a
+benchmark: while the camera flies in, the scene listens to its own frames, and if
+the typical one is too slow it picks the level that fits, in one step, before the
+camera settles. After that the picture **never changes again**.
+
+That last part is the lesson of an earlier version, which kept watching all
+session and dropped a level whenever the frame rate dipped. Each drop rebuilt the
+bloom and switched off the tilt-shift and shadows in a single frame, so the whole
+scene visibly lurched in the middle of play — and because it listened from the
+very first frame, when every game hitches, it could talk a perfectly good machine
+down a level before anything had happened. Now it skips the first moments,
+judges the median frame rather than the worst ones, and only ever acts while the
+camera is moving.
 
 **What each level gives up** was decided by measuring, not taste. Switching each
 feature off in turn, on a software renderer where fill rate is the scarce thing:
@@ -404,7 +412,34 @@ Measured on the same machine, low draws a frame about **three times faster** tha
 high.
 
 `GRAPHICS.force` pins a level if you want to see what a phone gets — set it to
-`"low"` and reload. `GRAPHICS.adapt` tunes the safety net, or switches it off.
+`"low"` and reload; a pinned level is never second-guessed. `GRAPHICS.adapt`
+tunes the benchmark, or switches it off.
+
+**The console says what happened.** Every start prints one line — the level and
+the GPU it is running on — and, if the benchmark had to lower it, a second line
+saying from what, to what, and how slow the frames were:
+
+```
+Graphics: high on NVIDIA GeForce RTX 4060 Laptop GPU.
+```
+```
+Graphics: high on Intel(R) UHD Graphics.
+Graphics: lowered from high to medium — frames took 43 ms during the opening, …
+Graphics: that is a built-in graphics chip. If this machine also has a dedicated
+graphics card, set the browser to use it — …
+```
+
+**Laptops with two GPUs run browsers on the weak one.** A gaming laptop has a
+built-in graphics chip for battery life and a dedicated card for games, and
+Windows gives web browsers the built-in one by default. A page cannot overrule
+that: the engine asks for `powerPreference: "high-performance"`, and Chrome on
+Windows ignores it. Measured on an RTX 4060 laptop, the same scene at 1080p ran
+at **92 fps on the card and about 16 fps on the Intel chip Chrome had picked** —
+so the game correctly lowered itself, on hardware that could have run it at the
+top level with room to spare. The fix is on the machine, not in the game:
+*Settings › System › Display › Graphics*, pick the browser, choose *High
+performance*, and restart the browser. The console's third line says exactly
+that when it applies.
 
 ---
 
@@ -602,7 +637,7 @@ downloaded during loading and decoded on that click.
 | night colour, fog, sky | `FOG`, `SKY`, `SUN`, `FILL`, `CLEAR_COLOR` |
 | bloom, contrast, depth of field | `POST` |
 | what each class of device gets | `GRAPHICS.levels` |
-| how quickly it gives up a level | `GRAPHICS.adapt` |
+| when it may lower the level | `GRAPHICS.adapt` (once, during the intro) |
 | crashes | `CRASH` |
 | sound | `SOUND` |
 | the view, and the opening shot | `CAMERA.view`, `CAMERA.intro` |

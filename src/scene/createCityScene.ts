@@ -14,8 +14,8 @@ import { createLighting, registerShadowCasters } from "./world/lighting";
 import { createClock } from "./core/frame";
 import type { Disposable } from "./core/types";
 import { createViewport } from "./core/viewport";
-import { chooseLevel, level, levelBelow, useLevel, watchFrameRate } from "./quality";
-import type { GraphicsLevel } from "./config";
+import { announce, calibrate, chooseLevel, level, useLevel } from "./quality";
+import { CAMERA, type GraphicsLevel } from "./config";
 import { createPostProcess } from "./world/postProcess";
 import { createSound } from "./audio/sound";
 import { readProps } from "./world/props";
@@ -56,7 +56,6 @@ export async function createCityScene(
   // What this device can take, settled before anything is built: a shadow map
   // cannot be resized later and a headlight cone never built costs nothing
   // forever. See quality.ts.
-  console.log("Graphics level in force:", chooseLevel(engine));
   useLevel(chooseLevel(engine));
 
   const scene = new Scene(engine);
@@ -152,17 +151,20 @@ export async function createCityScene(
   window.addEventListener("keydown", onKey);
   (window as unknown as Record<string, unknown>).inspect = inspect;
 
-  // The safety net under the guess: when the frame rate will not hold, give up
-  // a level. Everything that answers to one is told to re-read it.
-  const stopWatching = watchFrameRate(clock, () => {
-    const next = levelBelow(level);
-    if (!next) return false;
-    useLevel(next);
-    postFx.apply();
-    lighting.apply();
-    viewport.refresh();
-    return true;
-  });
+  // The safety net under the guess: the opening shot doubles as a benchmark. If
+  // the device cannot hold its level, the right one is chosen once, while the
+  // camera is still moving — and after that the picture never changes again.
+  const stopCalibrating = calibrate(
+    clock,
+    CAMERA.intro.flySeconds + CAMERA.intro.settleSeconds,
+    (next) => {
+      useLevel(next);
+      postFx.apply();
+      lighting.apply();
+      viewport.refresh();
+    },
+  );
+  announce();
 
   // A backgrounded tab or a phone with the screen off should not be drawing a
   // city. Browsers throttle animation frames on their own, but not all of them
@@ -184,7 +186,7 @@ export async function createCityScene(
     dispose: () => {
       window.removeEventListener("keydown", onKey);
       document.removeEventListener("visibilitychange", onVisibility);
-      stopWatching();
+      stopCalibrating();
       viewport.dispose();
       engine.stopRenderLoop(render);
       clock.dispose();

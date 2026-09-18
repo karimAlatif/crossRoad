@@ -1,6 +1,7 @@
 import {
   Color3,
   DynamicTexture,
+  InstancedMesh,
   Mesh,
   MeshBuilder,
   StandardMaterial,
@@ -52,6 +53,20 @@ export type UnlitOptions = {
  * stays black. This cost an afternoon once; it is why `byte()` takes a colour
  * channel and a strength.
  */
+/**
+ * Marks a mesh as receiving shadows — on its source, if it is an instance.
+ *
+ * An instance owns no material state, so setting `receiveShadows` on one does
+ * nothing except print a warning, once per instance. Most of the city and every
+ * car cloned from an instanced model arrive that way, and the flood — sixty-odd
+ * lines at every start — buried everything else in the console. The source mesh
+ * is the one that counts, so that is the one this sets.
+ */
+export function receiveShadows(mesh: AbstractMesh): void {
+  if (mesh instanceof InstancedMesh) mesh.sourceMesh.receiveShadows = true;
+  else mesh.receiveShadows = true;
+}
+
 export function unlit(scene: Scene, name: string, options: UnlitOptions): StandardMaterial {
   const material = new StandardMaterial(name, scene);
   material.diffuseColor = Color3.Black();

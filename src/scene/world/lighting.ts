@@ -9,6 +9,7 @@ import {
   type Scene,
 } from "@babylonjs/core";
 import { FILL, SUN } from "../config";
+import { receiveShadows } from "../core/visuals";
 import { graphics } from "../quality";
 
 export type Lighting = {
@@ -128,7 +129,7 @@ export function registerShadowCasters(
   if (!map) {
     // No shadow pass on this device, but receiving is free and the material
     // needs to know either way.
-    for (const mesh of meshes) mesh.receiveShadows = true;
+    for (const mesh of meshes) receiveShadows(mesh);
     return 0;
   }
 
@@ -137,7 +138,7 @@ export function registerShadowCasters(
 
   for (const mesh of meshes) {
     // Everything receives, which is free; only a fraction needs to cast.
-    mesh.receiveShadows = true;
+    receiveShadows(mesh);
 
     const bounds = mesh.getBoundingInfo().boundingBox;
     const sphere = mesh.getBoundingInfo().boundingSphere;

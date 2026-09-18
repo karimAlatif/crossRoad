@@ -376,7 +376,7 @@ export const ROAD_ONE = {
    */
   gap: {
     tease: { min: 1.2, max: 2.2 },
-    fair: { min: 3.6, max: 5.6 },
+    fair: { min: 3, max: 5.6 },
     fairChance: { easy: 0.8, hard: 0.3 },
   },
 
@@ -396,11 +396,11 @@ export const ROAD_ONE = {
   clear: {
     seconds: {
       easy: { min: 5.0, max: 7.0 },
-      hard: { min: .5, max: .8 },
+      hard: { min: .05, max: .15 },
     },
     every: {
       easy: { min: 6, max: 10 },
-      hard: { min: 22, max: 26 },
+      hard: { min: 24, max: 28 },
     },
     patience: { easy: 9, hard: 25 },
     counts: 2.5,
@@ -555,24 +555,32 @@ export const GRAPHICS = {
   force: null as GraphicsLevel | null,
 
   /**
-   * The safety net under the detection.
+   * The safety net under the detection: one listen, one decision, then silence.
    *
-   * No amount of guessing from a user-agent string beats measuring, so the
-   * scene watches its own frame rate and drops a level when it cannot hold
-   * `targetFps`. It only ever drops: a level that climbs back up on a good
-   * second would oscillate for the whole session, and a picture that keeps
-   * changing looks worse than one that is simply a notch lower.
+   * No amount of guessing from a renderer string beats measuring, so the opening
+   * shot doubles as a benchmark. The scene listens to its own frames while the
+   * camera flies in, and if the typical frame is too slow for `targetFps` it
+   * picks the level that would fit — in one step, and before the camera settles,
+   * so the change happens while the whole view is moving anyway.
    *
-   *   windowSeconds  how long a spell of bad frames has to last to count
-   *   strikes        how many such spells before it gives up a level. Two, so a
-   *                  single stutter — a wave of cars, a crash, a tab regaining
-   *                  focus — is not enough
+   * After that it never changes again. A picture that shifts in front of the
+   * player, mid-game, looks far worse than one that is simply a notch lower; an
+   * earlier version that kept watching all session did exactly that, and it read
+   * as the whole scene flickering.
+   *
+   *   targetFps  the rate a device has to hold to keep its level. 30, not 60:
+   *              this is for devices that are genuinely struggling, and a browser
+   *              capped at 30 is smooth, not slow
+   *   skip       seconds at the start that are ignored, because the first frames
+   *              of any game hitch while the GPU warms up and say nothing about
+   *              how fast the device really is
+   *
+   * A level pinned with `force` is never second-guessed.
    */
   adapt: {
     enabled: true,
-    targetFps: 45,
-    windowSeconds: 4,
-    strikes: 2,
+    targetFps: 20,
+    skip: 0.9,
   },
 
   levels: {
