@@ -155,11 +155,18 @@ like an opening and closes before a car could use it, or a **fair** one, which a
 single brave car can make. A road where every gap is crossable is a road you
 never have to watch.
 
-**The two rows are strangers.** They used to break together, which meant the
-road was either completely full or completely empty — a metronome, and once you
-learn its beat there is no game left. Each row now keeps its own rhythm, so what
-you are actually judging is the *overlap* of two unrelated streams, which is
-irregular in a way neither row is on its own.
+**The two rows are strangers — mostly.** They used to break together, which
+meant the road was either completely full or completely empty — a metronome, and
+once you learn its beat there is no game left. Each row now keeps its own rhythm,
+so what you are judging is the *overlap* of two unrelated streams.
+
+But two truly unrelated streams almost never leave a gap in the same place —
+measured, about once every two and a half minutes — which left nothing to cross
+*between*, and the game became waiting for the road to clear. So a fair gap in
+one row has a chance to **line up** with the other (`gap.pairChance`): both rows
+leave the gap at once, the way traffic does downstream of a light. That is the
+crossing this game is built around — a car's width of road between cars, there
+for a moment, that has to be spotted and taken.
 
 **Every car has its own speed.** The same gap is a different problem with a
 quick car behind it, and it should not look like it. Long vehicles lean towards
@@ -169,11 +176,13 @@ and clamps itself to that — measured over five minutes at every difficulty, th
 tightest gap between two cars in a row was 1.15 m and the road never once ran
 into itself.
 
-**And the road keeps a promise.** Every so often it clears completely: both rows
-stand aside and a real window opens at the junction. The interval is random, so
-it can be waited for but not counted — but if the dice go badly and the junction
-stays shut longer than `patience`, the next clearing is pulled forward. That one
-sentence is the whole design: unpredictable, never unfair.
+**And the road keeps a promise.** If the junction stays shut longer than
+`patience`, an opening is made — always at least `clear.counts` long, whatever
+else is configured. The road can also clear itself on a random interval
+(`clear.every`), which is the generous, flush-the-queue version; at the hard end
+that is rare and short, so the openings you get are overwhelmingly the gaps
+between cars. That one sentence is the whole design: unpredictable, never
+unfair.
 
 ### One dial for all of it
 
@@ -181,22 +190,48 @@ sentence is the whole design: unpredictable, never unfair.
 in the block is read through it. Measured over four simulated minutes at each
 setting:
 
-| difficulty | cars/min | junction busy | openings/min | longest wait |
-|---|---|---|---|---|
-| 0 | 28 | 29% | 5.8 | 12 s |
-| 0.25 | 42 | 40% | 5.3 | 17 s |
-| **0.5** (default) | 57 | 54% | 3.3 | 20 s |
-| 0.75 | 71 | 58% | 3.3 | 24 s |
-| 1 | 83 | 65% | 3.0 | 27 s |
+| difficulty | cars/min | junction busy | openings/min | longest wait | careful player | sharp player |
+|---|---|---|---|---|---|---|
+| 0 | 27 | 26% | 7.0 | 11 s | 69 cars/min | 70 cars/min |
+| 0.5 | 60 | 47% | 5.6 | 24 s | 48 cars/min | 48 cars/min |
+| 0.75 | 80 | 58% | 4.0 | 30 s | 36 cars/min | 35 cars/min |
+| **0.95** (current) | 102 | 69% | 2.4 | 34 s | 16 cars/min | 24 cars/min |
+| 1 | 108 | 70% | 2.4 | 35 s | 10 cars/min | 30 cars/min |
+
+Eight to twelve simulated minutes per row. At the easy end the two players do
+equally well; at the hard end they come apart, because the openings are tight
+and brief enough that taking a 2.6-second gap rather than waiting for a
+3-second one is the difference between getting a car across and not. That is
+the difficulty curve doing its job: the hard end is not just less generous, it
+rewards being sharp.
 
 An "opening" is 2.5 seconds of clear junction — about what one car needs to pull
-away and get across. The "longest wait" is the worst case in those four minutes,
-and it tracks `patience` by design: that is the promise being kept.
+away and get across. The "longest wait" tracks `patience` by design: that is the
+promise. The "careful player" is a stand-in that opens the light on a
+three-second window and closes it as the window runs out; the "sharp player"
+takes 2.6-second ones. Neither **crashed once at any setting** — the difficulty
+changes how much you can get through, not whether good play is punished.
 
-A stand-in player that opens the light on a three-second window and closes it as
-the window runs out got **78 cars a minute across at difficulty 0 and 34 at
-difficulty 1, and never crashed once**. The difficulty changes what you can get
-through, not whether careful play is punished.
+**What actually makes it harder**, measured rather than guessed:
+
+- **Pace and density** — `speed`, `run`, `headway`. At the top end a car covers
+  the whole road in under two and a half seconds, so a gap has to be seen and
+  taken rather than considered. This made crossing much harder without changing
+  *what kind* of opening the player gets.
+- **How often gaps line up** — `gap.pairChance` — and how long the promise waits
+  — `clear.patience`. These set how many openings there are at all.
+- **Not** shorter gaps. Counter-intuitively, tightening `gap.fair` made the game
+  *easier*: shorter gaps mean each row cycles faster, which gives gaps more
+  chances to line up.
+- **Not** fewer fair gaps. Cutting `fairChance` leaves too few gaps to line up,
+  and the openings the player gets start arriving on the promise's timer — which
+  is predictable, and predictable is the opposite of what this road is for.
+
+For comparison, the setting that preceded this one — difficulty 0.95 with the
+road's clearings cut to a tenth of a second — measured **0.4 openings a minute,
+waits of nearly two minutes, and not one car across** for the careful player.
+Cutting the clearings to zero had quietly switched off the promise too, which is
+why the promise now has a floor of its own.
 
 **roodTwo obeys the signal.** These cars queue behind the stop line and behind
 each other, so they need the full model: `minGap`, `accel`, `brake`, and
@@ -622,7 +657,8 @@ downloaded during loading and decoded on that click.
 |---|---|
 | **how hard it is to cross** | `ROAD_ONE.difficulty`, one number, 0 to 1 |
 | the shape of the cross traffic | `ROAD_ONE.run`, `headway`, `gap` |
-| how often the road clears | `ROAD_ONE.clear` |
+| how often a gap between cars lines up | `ROAD_ONE.gap.pairChance` |
+| how often the road clears itself | `ROAD_ONE.clear` |
 | how fast traffic moves | `ROAD_ONE.speed`, `ROAD_TWO.speed` |
 | how cars queue and pull away | `ROAD_TWO.minGap`, `accel`, `brake`, `comfort` |
 | the shudder, dive and lift | `ANIM` |

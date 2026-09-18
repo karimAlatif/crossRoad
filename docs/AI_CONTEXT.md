@@ -223,11 +223,40 @@ is invisible" rather than an error.
     is still going past. Each mistake silently turned a 4-second promised window
     into about 2 seconds of real one. There is no way to see either by reading
     the code; step the sim and measure the junction.
-29. **Cars are pooled, so anything counted with a flag on the car saturates at
+29. **Independent rows need a way to line up, and the promise needs a floor.**
+    Two unrelated rows leave a shared gap about once every 2.5 minutes, so with
+    the clearings turned down there was nothing to cross between.
+    `gap.pairChance` lets a fair gap on one row line the whole road up
+    (`standAside` for that gap's length); that is now the main source of
+    openings. Separately, the promise used `clear.seconds`, so setting it near
+    zero silently hollowed the promise out — a measured 115 s wait with zero cars
+    across. A starved clearing now always lasts at least `counts + 0.4`. Measure
+    both "openings/min" and "openings/min with clearings disabled" when tuning:
+    the second is how much of the game is gaps between cars.
+30. **`ROAD_ONE.speed` is on the difficulty dial** (`{ easy, hard }`), read
+    through `flow.ts#pace()` — including by `road.ts` for the free lane's rules.
+    When making the road harder, pace and density are the levers that keep the
+    openings as gaps between cars; shortening `gap.fair` makes it *easier*
+    (rows cycle faster, so gaps line up more), and cutting `fairChance` pushes
+    the openings onto the promise's timer. Single five-minute simulations vary by
+    ±25% on these metrics: compare candidates head to head with 8–12 minute
+    samples before drawing conclusions.
+31. **A wreck has speed zero, so keep it out of any "distance ÷ speed" sum.**
+    Cross-traffic cars hold their entry speed for the whole road, so two bits of
+    arithmetic went badly wrong around wrecks. The entry clamp ("never catch the
+    car ahead") read a wreck's zero as "you may only crawl" and let a car on at
+    0.14 m/s; it sat in the entry for nine minutes and nothing else in that lane
+    could get on. And `busySeconds` divided the distance to clear by a wreck's
+    zero speed and held a lane shut for twelve minutes. Now the clamp uses the
+    nearest car that is still *driving*, a car that could only enter at a crawl
+    waits at the gate instead (`SLOWEST_ENTRY`), and a wreck counts as clear when
+    it finishes poofing. Test with a careless player — the light flipping on a
+    timer — because a careful one never makes the wrecks that expose this.
+32. **Cars are pooled, so anything counted with a flag on the car saturates at
     the pool size.** Count transitions (`was <= line && is > line`) instead. This
     produced a confident "0 cars are getting through" that was entirely the
     measurement's fault.
-30. **Check which GPU the browser is actually using before believing a
+33. **Check which GPU the browser is actually using before believing a
     performance report.** The dev machine is a laptop with an Intel UHD and an
     RTX 4060, and Chrome runs on the Intel by default — `powerPreference:
     "high-performance"` is ignored on Windows. "The quality drops on my PC" was
@@ -235,13 +264,13 @@ is invisible" rather than an error.
     launch the test Chrome with `--force_high_performance_gpu --use-angle=d3d11`
     and without `--use-gl=swiftshader`; `engine.getGlInfo().renderer` names the
     adapter. The console line from `quality.ts#announce` names it for users.
-31. **Never set `receiveShadows` on an instance** — use
+34. **Never set `receiveShadows` on an instance** — use
     `core/visuals.ts#receiveShadows`, which sets it on the source. An instance
     owns no material state; Babylon warns once per instance, and the city plus
     the car clones printed 65 warnings at every start. Earlier verification
     scripts filtered that warning out, which is how it survived: do not filter
     console output you have not read.
-32. **`camera.position` is only recomputed when the view matrix is.** Reading it
+35. **`camera.position` is only recomputed when the view matrix is.** Reading it
     in a headless harness that never renders gives a stale value — call
     `camera.getViewMatrix()` first. This produced a false "the camera never
     rises" reading once.

@@ -1,10 +1,10 @@
 import { Vector3 } from "@babylonjs/core";
-import { LIGHT, PROPS, ROAD_ONE, ROAD_TWO, TRAFFIC } from "../config";
+import { LIGHT, PROPS, ROAD_TWO, TRAFFIC } from "../config";
 import { between, mid } from "../core/maths";
 import type { Range } from "../core/types";
 import type { RoadSpec } from "../world/props";
 import type { CarRig } from "./carFactory";
-import { createFlow, enter, rowPool, type Flow } from "./flow";
+import { createFlow, enter, pace, rowPool, type Flow } from "./flow";
 
 /**
  * The road as the simulation sees it: what a lane is, what a car on it knows,
@@ -115,7 +115,7 @@ export function rulesFor(road: RoadSpec): Rules {
   }
   return {
     free: true,
-    speed: ROAD_ONE.speed,
+    speed: pace(),
     spawnGap: 0,
     minGap: 0,
     accel: 0,

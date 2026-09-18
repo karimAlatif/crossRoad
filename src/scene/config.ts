@@ -344,8 +344,17 @@ export const ROAD_ONE = {
    * rather than count, because the same opening is a different problem with a
    * quick car behind it. Nothing may catch the car in front whatever this says:
    * `flow.ts` clamps a joining car to a speed that still lets the leader leave.
+   *
+   * On the difficulty dial like everything else, because pace is the most honest
+   * kind of hard there is: at the top end a car covers the whole road in under
+   * two and a half seconds, so a gap has to be seen and taken, not considered.
+   * Measured, raising the pace was the one change that made crossing harder
+   * *without* turning the openings back into the road clearing itself.
    */
-  speed: { min: 17, max: 27 },
+  speed: {
+    easy: { min: 16, max: 24 },
+    hard: { min: 21, max: 32 },
+  },
 
   /**
    * How much a long vehicle is pulled towards the slow end, 0 to 1. This is what
@@ -357,52 +366,67 @@ export const ROAD_ONE = {
   /** Cars in one run, per row. */
   run: {
     easy: { min: 1, max: 3 },
-    hard: { min: 2, max: 6 },
+    hard: { min: 3, max: 8 },
   },
 
   /** Seconds between the cars of a run. Drawn once per run, so runs differ. */
   headway: {
     easy: { min: 0.9, max: 1.5 },
-    hard: { min: 0.6, max: 1.0 },
+    hard: { min: 0.48, max: 1 },
   },
 
   /**
-   * The gap a row leaves after a run.
+   * The gap a row leaves after a run — and whether it lines up across the road.
+   *
+   * This is where the crossings come from. A gap in one row is useless while the
+   * other row is still going past, and two unrelated rows almost never leave a
+   * gap in the same place: measured, about once every two and a half minutes. So
+   * a fair gap has a chance to *line up* — the other row leaves one at the same
+   * moment, the way traffic does downstream of a light — and that is the opening
+   * the player is looking for: a car's width of road between cars, there for a
+   * moment, that has to be spotted and taken.
    *
    *   tease       looks like an opening, closes before a car could use it. A road
    *               where every gap is crossable is a road you never have to watch
-   *   fair        a single car can make it, if the other row agrees
-   *   fairChance  how often the gap is a fair one rather than a tease
+   *   fair        long enough for one car, maybe two, if the road lines up
+   *   fairChance  how often a row's gap is a fair one rather than a tease
+   *   pairChance  how often a fair gap lines up across the road. The main dial
+   *               for how often the player gets a chance at all
    */
   gap: {
     tease: { min: 1.2, max: 2.2 },
-    fair: { min: 3, max: 5.6 },
+    fair: { min: 3.0, max: 4.8 },
     fairChance: { easy: 0.8, hard: 0.3 },
+    pairChance: { easy: 0.65, hard: 0.22 },
   },
 
   /**
-   * The moment the whole road stands aside — both rows at once, a real window at
-   * the junction, and the chance to empty the queue rather than trickle it.
+   * The road standing aside on its own — both rows at once — which is the
+   * generous version of an opening, and deliberately rare at the hard end.
    *
-   *   seconds   how long the junction stays clear
-   *   every     how long between one clearing and the next. Random, so it can be
-   *             waited for but not counted
+   *   seconds   how long the junction stays clear when it happens. Short at the
+   *             hard end: one car's worth, so it reads as a gap rather than a
+   *             road being emptied for you
+   *   every     how long between one and the next. Long at the hard end, so the
+   *             openings the player gets are overwhelmingly the gaps above
    *   patience  the promise: if the junction has not offered an opening worth the
-   *             name for this long, the next clearing is pulled forward to now.
-   *             This is what keeps the randomness from ever being unfair
+   *             name for this long, one is made now — and it is always at least
+   *             `counts` long, whatever `seconds` says. Setting `seconds` near
+   *             zero used to hollow this out entirely: measured, a careful player
+   *             waited nearly two minutes and got nobody across
    *   counts    what "an opening worth the name" means, in seconds of clear
    *             junction. About what one car needs to pull away and get across
    */
   clear: {
     seconds: {
       easy: { min: 5.0, max: 7.0 },
-      hard: { min: .05, max: .15 },
+      hard: { min: 1.6, max: 2 },
     },
     every: {
       easy: { min: 6, max: 10 },
-      hard: { min: 24, max: 28 },
+      hard: { min: 60, max: 80 },
     },
-    patience: { easy: 9, hard: 25 },
+    patience: { easy: 9, hard: 32 },
     counts: 2.5,
   },
 };
