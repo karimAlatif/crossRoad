@@ -12,6 +12,7 @@ import type { Disposable, Range } from "../core/types";
 import { radialTexture } from "../core/visuals";
 import { clipTiming } from "../traffic/carAnimations";
 import { burstSystem, grow } from "./particles";
+import { graphics } from "../quality";
 import { createMarkPool, type MarkPool } from "./roadMarks";
 
 /**
@@ -79,19 +80,20 @@ type Emitter = {
  * `clipTiming()` from the keyframes themselves.
  */
 export function createCarEffects(scene: Scene, clock: Clock): CarEffects | null {
-  if (!CAR_FX.enabled) return null;
+  if (!CAR_FX.enabled || !graphics.smoke) return null;
 
   const { idle, move, brake } = CAR_FX;
   const cloud = cloudTexture(scene);
   const haze = hazeTexture(scene);
   const timing = clipTiming();
 
-  const skids: MarkPool | null = SKID_MARK.enabled
-    ? createMarkPool(scene, "skid.mark", SKID_MARK)
-    : null;
-  const trails: MarkPool | null = LIGHT_TRAIL.enabled
-    ? createMarkPool(scene, "trail.mark", LIGHT_TRAIL)
-    : null;
+  // Both pools are additive ribbons laid down the road, so they are fill rate
+  // above all — the first thing a weak device should not be paying for.
+  const marks = graphics.roadMarks;
+  const skids: MarkPool | null =
+    marks && SKID_MARK.enabled ? createMarkPool(scene, "skid.mark", SKID_MARK) : null;
+  const trails: MarkPool | null =
+    marks && LIGHT_TRAIL.enabled ? createMarkPool(scene, "trail.mark", LIGHT_TRAIL) : null;
 
   // --- idle: barely there ---------------------------------------------------
   //

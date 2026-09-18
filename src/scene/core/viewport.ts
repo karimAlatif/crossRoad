@@ -1,5 +1,5 @@
 import type { AbstractEngine } from "@babylonjs/core";
-import { QUALITY } from "../config";
+import { graphics } from "../quality";
 import type { Disposable } from "./types";
 
 /**
@@ -27,11 +27,16 @@ import type { Disposable } from "./types";
  * the post stack owns. Once per frame at the very most, no matter how loudly the
  * browser shouts.
  */
+export type Viewport = Disposable & {
+  /** Re-reads the graphics level and resizes to match. */
+  refresh: () => void;
+};
+
 export function createViewport(
   engine: AbstractEngine,
   canvas: HTMLCanvasElement,
   reframe: () => void,
-): Disposable {
+): Viewport {
   let queued = 0;
 
   const apply = () => {
@@ -56,6 +61,7 @@ export function createViewport(
   window.addEventListener("orientationchange", schedule);
 
   return {
+    refresh: schedule,
     dispose: () => {
       if (queued) cancelAnimationFrame(queued);
       observer.disconnect();
@@ -72,12 +78,14 @@ export function createViewport(
  * Three limits, smallest wins:
  *
  *   - the display's own ratio, because rendering above it is wasted work;
- *   - `QUALITY.maxPixelRatio`, because a 3x phone would otherwise shade nine
- *     times the pixels of a 1x one for a picture no one can see the difference
- *     in;
- *   - `QUALITY.maxPixels`, a flat budget on the total. This is the one that
- *     matters on desktop: a maximised 4K window asks for four times the shading
- *     of a 1080p one at the same ratio, and this scene is fill-rate bound.
+ *   - the graphics level's `maxPixelRatio`, because a 3x phone would otherwise
+ *     shade nine times the pixels of a 1x one for a picture no one can see the
+ *     difference in;
+ *   - its `maxPixels`, a flat budget on the total. This is the one that matters
+ *     on desktop: a maximised 4K window asks for four times the shading of a
+ *     1080p one at the same ratio, and this scene is fill-rate bound. It is also
+ *     what a dropped level lowers first, because halving the pixels is the
+ *     cheapest large saving there is.
  *
  * With a floor under all of it, because past a point a soft picture is worse
  * than a slow one.
@@ -85,6 +93,6 @@ export function createViewport(
 function renderScale(canvas: HTMLCanvasElement): number {
   const ratio = window.devicePixelRatio || 1;
   const pixels = Math.max(1, canvas.clientWidth * canvas.clientHeight);
-  const budget = Math.sqrt(QUALITY.maxPixels / pixels);
-  return Math.max(QUALITY.minRenderScale, Math.min(ratio, QUALITY.maxPixelRatio, budget));
+  const budget = Math.sqrt(graphics.maxPixels / pixels);
+  return Math.max(graphics.minRenderScale, Math.min(ratio, graphics.maxPixelRatio, budget));
 }

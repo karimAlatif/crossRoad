@@ -20,6 +20,7 @@ to be removed early on, twice. Do not add HUD elements unless asked.
 ```
 src/scene/
   config.ts            every tunable in the project, one file
+  quality.ts           picks a graphics level per device, and watches the fps
   createCityScene.ts   composition root: builds everything, wires it, returns the API
   core/                shared by everything
     types.ts           Range, Disposable
@@ -160,9 +161,31 @@ is invisible" rather than an error.
     canvas (not `window.resize` — the canvas resizes for reasons the window never
     hears about), coalesced into one animation frame, settling resolution,
     `engine.resize()` and framing together. Resolution is the smallest of the
-    device ratio, `QUALITY.maxPixelRatio` and `QUALITY.maxPixels`; the last is a
-    flat budget that keeps a 4K window from shading 4x a 1080p one.
-19. **`camera.position` is only recomputed when the view matrix is.** Reading it
+    device ratio and the graphics level's `maxPixelRatio` and `maxPixels`; the
+    last is a flat budget that keeps a 4K window from shading 4x a 1080p one.
+19. **Graphics settings are per device, and live.** `GRAPHICS.levels` in the
+    config holds three of them; `quality.ts` picks one at startup (before
+    anything is built — a shadow map cannot be resized and an unbuilt cone costs
+    nothing) and `graphics` is the one in force. It is an `export let`, so read
+    `graphics.x` at the point of use and never destructure it at module scope,
+    or you capture the level the module happened to load under.
+20. **Levels only take away.** A feature switched off in its own block stays off
+    at every level: `graphics.smoke && CAR_FX.enabled`, never one or the other.
+21. **The governor drops a level but never raises one**, and only touches what
+    can change live: render scale, post flags, shadows on/off. Content decided at
+    build time — beams, ribbon pools, shadow map size — stays as built. When
+    adding a knob, put it in `GraphicsSettings` and give its owner an `apply()`
+    that re-reads `graphics`; `createCityScene` calls those in the governor.
+22. **Decide what to cut by measuring, not by looking.** Turning each feature off
+    in turn (software renderer, fill-rate bound) gave: resolution 38%, bloom 8%,
+    shadows 8%, glow 4.6%, road marks 2.2%, DoF 1.5%, and all sixty headlight
+    cones 0.3%. The intuitive cut — the beams — was worthless; the resolution
+    budget is worth more than everything else combined.
+23. **The inspector is loaded on demand** (`inspect()` or the `i` key), not
+    imported. Importing it statically put ~10 MB of editor UI in the bundle and
+    doubled the request count on first load: 2.60 MB over the wire became 2.02 MB
+    across half as many files. Do not add the static import back.
+24. **`camera.position` is only recomputed when the view matrix is.** Reading it
     in a headless harness that never renders gives a stale value — call
     `camera.getViewMatrix()` first. This produced a false "the camera never
     rises" reading once.
@@ -205,15 +228,18 @@ Pitfalls in that harness, all of which have produced false results here:
 
 ## Performance
 
-Measured by stepping the sim 1200 frames with no rendering and timing it:
+Measured by stepping the sim 600 frames with no rendering and timing it, and by
+drawing for 20 s on a software rasteriser at 1280x720 (which is fill-rate bound,
+so treat the frame times as a ratio between levels, not as real-world numbers):
 
-| | |
-|---|---|
-| CPU per frame (sim + effects) | **0.11 ms** |
-| draw calls | ~940 |
-| active meshes | ~1200 |
-| real lights | 3 |
-| particle systems | 6 |
+| | high | medium | low |
+|---|---|---|---|
+| CPU per frame (sim + effects) | 0.16 ms | 0.12 ms | 0.14 ms |
+| relative frame cost | 1.00x | 0.70x | **0.33x** |
+| shadow map | 1536, 2 passes, 422 casters | 1024, 1 pass, 277 casters | none |
+| active meshes | ~1230 | ~1310 | ~1270 |
+| real lights | 3 | 3 | 3 |
+| particle systems | 6 | 6 | 6 |
 
 What keeps it there, and must not be casually undone:
 
@@ -228,8 +254,14 @@ What keeps it there, and must not be casually undone:
 - The pools are **rings**: `SKID_MARK.pool`, `LIGHT_TRAIL.pool` bound the road's
   memory and draw cost no matter how long the game runs.
 - The render resolution is **budgeted, not inherited** (`core/viewport.ts`). A 4K
-  window renders at ~2300x1300. Raising `QUALITY.maxPixels` is the quickest way
-  to make this scene slow on a big monitor.
+  window renders at ~2300x1300. Raising `maxPixels` is the quickest way to make
+  this scene slow on a big monitor.
+- The engine asks for **no canvas antialiasing and no stencil**: the scene is
+  drawn into the post stack's buffer and blitted, so MSAA on the canvas would
+  smooth the edges of one full-screen quad. AA is FXAA inside the pipeline.
+- Babylon's **audio engine is off** (`audioEngine: false`) — the game runs its own
+  Web Audio graph, and the second AudioContext was never used.
+- Rendering **stops when the tab is hidden**.
 
 ## Working with the owner
 

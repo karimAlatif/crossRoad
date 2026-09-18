@@ -15,6 +15,7 @@ import type { Clock } from "../core/frame";
 import { byte } from "../core/maths";
 import type { Disposable } from "../core/types";
 import { plane, planeSource, radialTexture, unlit, type PlaneSource } from "../core/visuals";
+import { graphics } from "../quality";
 import { createFlicker } from "./flicker";
 
 /**
@@ -137,18 +138,23 @@ export function createHeadlights(scene: Scene, clock: Clock): Headlights | null 
     const headlamps: AbstractMesh[][] = [];
 
     for (const at of mounts.front) {
-      const cone = place(
-        beamSource,
-        "headlight.beam",
-        beamMaterial,
-        beam.endWidth,
-        beam.length,
-        beams,
-        at.x,
-        ROAD_CLEARANCE,
-        at.z + beam.length / 2,
-        Math.PI / 2,
-      );
+      // The cone is a big additive quad per lamp — a lot of overdraw for a phone
+      // to carry sixty times over — so a low graphics level keeps the lamps and
+      // drops the light they throw.
+      const cone = graphics.beams
+        ? place(
+            beamSource,
+            "headlight.beam",
+            beamMaterial,
+            beam.endWidth,
+            beam.length,
+            beams,
+            at.x,
+            ROAD_CLEARANCE,
+            at.z + beam.length / 2,
+            Math.PI / 2,
+          )
+        : null;
       const bulb = place(
         frontSource,
         "headlight.lamp",
@@ -161,7 +167,7 @@ export function createHeadlights(scene: Scene, clock: Clock): Headlights | null 
         at.z,
         lampPitch,
       );
-      headlamps.push([bulb, cone]);
+      headlamps.push(cone ? [bulb, cone] : [bulb]);
     }
 
     // The back gets the same treatment as the front, at its own markers, in red.

@@ -2,7 +2,7 @@ import {
   Observable,
   Quaternion,
   Vector3,
-  type CascadedShadowGenerator,
+  type ShadowGenerator,
   type Scene,
   type TransformNode,
 } from "@babylonjs/core";
@@ -49,7 +49,7 @@ export function createTraffic(
   clock: Clock,
   space: TransformNode,
   roads: RoadSpec[],
-  shadows: CascadedShadowGenerator | null,
+  shadows: ShadowGenerator | null,
 ): Traffic {
   const factory = createCarFactory(scene, clock, space, shadows);
   const effects = createCrashEffects(scene);

@@ -5,7 +5,7 @@ import {
   Vector3,
   type AbstractMesh,
   type Animation,
-  type CascadedShadowGenerator,
+  type ShadowGenerator,
   type Mesh,
   type Scene,
 } from "@babylonjs/core";
@@ -116,7 +116,7 @@ export function createCarFactory(
   scene: Scene,
   clock: Clock,
   space: TransformNode,
-  shadows: CascadedShadowGenerator | null,
+  shadows: ShadowGenerator | null,
 ): CarFactory {
   const group = scene.getNodeByName(CARS_GROUP);
   if (!group) throw new Error(`The .glb has no "${CARS_GROUP}" group`);

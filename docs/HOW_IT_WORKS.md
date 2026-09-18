@@ -44,8 +44,10 @@ there without opening anything else.
 `createCityScene` runs once, in this order. The labels are what you see on the
 loading screen.
 
-1. **Engine and scene.** Render resolution is capped (`QUALITY.maxPixelRatio`) —
-   a 2× display would otherwise shade four times the pixels.
+1. **Engine and scene.** The device is sized up first (`quality.ts`) and a
+   graphics level chosen, because some of what follows cannot be changed later:
+   a shadow map cannot be resized, and a headlight cone never built costs
+   nothing forever. See "One game, every device" below.
 2. **The clock starts.** One heartbeat that every moving part hangs off. More on
    this below.
 3. **Sound begins downloading** in the background, so it is ready but silent.
@@ -299,10 +301,60 @@ coalesced into the next animation frame, because a drag-resize fires in bursts
 and every `engine.resize()` reallocates the post stack's render targets.
 
 The resolution is the smallest of three limits: the display's own pixel ratio,
-`QUALITY.maxPixelRatio`, and `QUALITY.maxPixels` — a flat budget on the total.
+the level's `maxPixelRatio`, and its `maxPixels` — a flat budget on the total.
 That last one is what protects a 4K monitor, which would otherwise ask for four
 times the shading of a 1080p one for a scene that is already fill-rate bound. A
 maximised 4K window renders at about 2300 x 1300 and is then scaled up.
+
+### One game, every device
+
+A 2019 Android phone and a desktop with a graphics card are asked to draw the
+same city. `GRAPHICS` in the config holds three versions of the answer, and
+`quality.ts` decides which one this machine gets.
+
+**It guesses first, then measures.** The guess reads what the browser will admit
+to — the GPU's name, the core count, the memory, whether the pointer is a finger
+— and errs low on purpose: a strong phone that starts one level down looks good
+immediately, while a weak one that starts too high spends its first seconds
+visibly falling back. Then the scene watches its own frame rate. Two bad spells
+in a row and it gives up a level, whatever the guess said. It never climbs back:
+a picture that keeps changing looks worse than one that is simply a notch lower.
+
+**What each level gives up** was decided by measuring, not taste. Switching each
+feature off in turn, on a software renderer where fill rate is the scarce thing:
+
+| | share of a frame |
+|---|---|
+| halving the resolution | **38%** |
+| bloom | 8% |
+| the shadow pass | 8% |
+| the glow layer | 4.6% |
+| skid marks and light trails | 2.2% |
+| depth of field | 1.5% |
+| FXAA, sharpen | ~1% |
+| **all sixty headlight cones** | **0.3%** |
+
+Which is why the levels look the way they do. Resolution carries most of the
+load. The headlight beams — which look like the expensive thing, sixty additive
+quads — cost nothing worth having, so they survive even at the bottom: a night
+street with no headlights is not this game.
+
+| | high | medium | low |
+|---|---|---|---|
+| pixel budget | 2.5 M | 1.5 M | 0.8 M |
+| shadows | 1536, two passes | 1024, one pass | none |
+| depth of field | yes | yes | no |
+| bloom | 0.6 / 64 | 0.45 / 48 | 0.3 / 32 |
+| sharpen | yes | no | no |
+| headlights, glow, smoke | yes | yes | yes |
+| skid marks, light trails | yes | yes | no |
+| texture filtering | 8x | 4x | 1x |
+
+Measured on the same machine, low draws a frame about **three times faster** than
+high.
+
+`GRAPHICS.force` pins a level if you want to see what a phone gets — set it to
+`"low"` and reload. `GRAPHICS.adapt` tunes the safety net, or switches it off.
 
 ---
 
@@ -452,12 +504,13 @@ downloaded during loading and decoded on that click.
 | the signal's look and timing | `LIGHT` |
 | night colour, fog, sky | `FOG`, `SKY`, `SUN`, `FILL`, `CLEAR_COLOR` |
 | bloom, contrast, depth of field | `POST` |
-| what to switch off for speed | `QUALITY` |
+| what each class of device gets | `GRAPHICS.levels` |
+| how quickly it gives up a level | `GRAPHICS.adapt` |
 | crashes | `CRASH` |
 | sound | `SOUND` |
 | the view, and the opening shot | `CAMERA.view`, `CAMERA.intro` |
 | what stays in frame on a phone | `CAMERA.frame` |
-| render resolution on big screens | `QUALITY.maxPixels`, `maxPixelRatio` |
+| render resolution on big screens | `GRAPHICS.levels.*.maxPixels` |
 
 ---
 

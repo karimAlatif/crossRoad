@@ -6,7 +6,6 @@ import {
   type ArcRotateCamera,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF/2.0";
-import "@babylonjs/inspector"; // Add this line!
 
 import { createCamera, fitToScreen, playIntro, readCameraPath } from "./world/camera";
 import { loadCity, type LoadProgress } from "./world/city";
@@ -15,6 +14,8 @@ import { createLighting, registerShadowCasters } from "./world/lighting";
 import { createClock } from "./core/frame";
 import type { Disposable } from "./core/types";
 import { createViewport } from "./core/viewport";
+import { chooseLevel, level, levelBelow, useLevel, watchFrameRate } from "./quality";
+import type { GraphicsLevel } from "./config";
 import { createPostProcess } from "./world/postProcess";
 import { createSound } from "./audio/sound";
 import { readProps } from "./world/props";
@@ -30,18 +31,34 @@ export type CityScene = Disposable & {
   onCrash: (handler: (event: CrashEvent) => void) => void;
   isGreen: () => boolean;
   toggleLight: () => void;
+  /** The graphics level in force, which the device chose and may yet lower. */
+  quality: () => GraphicsLevel;
 };
 
 export async function createCityScene(
   canvas: HTMLCanvasElement,
   onProgress: LoadProgress,
 ): Promise<CityScene> {
-  const engine = new Engine(canvas, true, {
-    antialias: true,
-    stencil: true,
+  const engine = new Engine(canvas, false, {
+    // The scene is drawn into the post stack's own buffer and only blitted to
+    // the canvas, so multisampling the canvas would smooth the edges of a
+    // full-screen quad — nothing. Anti-aliasing is FXAA inside the pipeline.
+    antialias: false,
+    // Nothing here uses a stencil, and on mobile the buffer is bandwidth.
+    stencil: false,
     preserveDrawingBuffer: false,
+    // The game runs its own Web Audio graph; Babylon's would be a second
+    // AudioContext that never plays anything, which iOS in particular counts.
+    audioEngine: false,
     powerPreference: "high-performance",
   });
+
+  // What this device can take, settled before anything is built: a shadow map
+  // cannot be resized later and a headlight cone never built costs nothing
+  // forever. See quality.ts.
+  console.log("Graphics level in force:", chooseLevel(engine));
+  useLevel(chooseLevel(engine));
+
   const scene = new Scene(engine);
   scene.skipPointerMovePicking = true;
   scene.blockMaterialDirtyMechanism = true;
@@ -120,7 +137,44 @@ export async function createCityScene(
 
   const render = () => scene.render();
   engine.runRenderLoop(render);
-  // scene.debugLayer.show();
+
+  // Babylon's inspector is around 10 MB of editor UI — node editors, the GUI
+  // designer, the whole toolchain — and importing it at the top of this file put
+  // every byte of it in the bundle a phone downloads before it sees a single
+  // frame. It is worth having and not worth shipping, so it is fetched on
+  // demand: press `i`, or call `inspect()` from the console.
+  const inspect = async () => {
+    await import("@babylonjs/inspector");
+    const shown = scene.debugLayer.isVisible();
+    if (shown) scene.debugLayer.hide();
+    else await scene.debugLayer.show({ overlay: true });
+  };
+  const onKey = (event: KeyboardEvent) => {
+    if (event.key === "i" && !event.ctrlKey && !event.metaKey && !event.altKey) void inspect();
+  };
+  window.addEventListener("keydown", onKey);
+  (window as unknown as Record<string, unknown>).inspect = inspect;
+
+  // The safety net under the guess: when the frame rate will not hold, give up
+  // a level. Everything that answers to one is told to re-read it.
+  const stopWatching = watchFrameRate(clock, () => {
+    const next = levelBelow(level);
+    if (!next) return false;
+    useLevel(next);
+    postFx.apply();
+    lighting.apply();
+    viewport.refresh();
+    return true;
+  });
+
+  // A backgrounded tab or a phone with the screen off should not be drawing a
+  // city. Browsers throttle animation frames on their own, but not all of them
+  // and not immediately.
+  const onVisibility = () => {
+    if (document.hidden) engine.stopRenderLoop(render);
+    else engine.runRenderLoop(render);
+  };
+  document.addEventListener("visibilitychange", onVisibility);
 
   return {
     engine,
@@ -129,7 +183,11 @@ export async function createCityScene(
     onCrash: (handler) => traffic.onCrash.add(handler),
     isGreen: light.isGreen,
     toggleLight: light.toggle,
+    quality: () => level,
     dispose: () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("visibilitychange", onVisibility);
+      stopWatching();
       viewport.dispose();
       engine.stopRenderLoop(render);
       clock.dispose();

@@ -19,6 +19,7 @@ import {
   EMISSIVE_STRENGTH,
   PROPS,
 } from "../config";
+import { graphics } from "../quality";
 
 export type City = {
   container: AssetContainer;
@@ -141,7 +142,7 @@ function polishMaterials(container: AssetContainer): void {
     // a glancing angle without shimmering.
     for (const texture of material.getActiveTextures()) {
       if (texture instanceof Texture) {
-        texture.anisotropicFilteringLevel = 8;
+        texture.anisotropicFilteringLevel = graphics.anisotropy;
         texture.updateSamplingMode(Texture.TRILINEAR_SAMPLINGMODE);
       }
     }

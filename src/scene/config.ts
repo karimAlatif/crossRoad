@@ -136,15 +136,12 @@ export const SUN = {
   color: new Color3(0.62, 0.74, 1.0),
   intensity: 0.58,
   shadow: {
-    mapSize: 1536,
-    cascades: 2,
+    /** Map size and cascade count are per device: see `GRAPHICS.levels`. */
     lambda: 0.86,
     maxZ: 110,
     darkness: 0.34,
     bias: 0.012,
     normalBias: 0.018,
-    /** Only meshes within this radius of the crossroad cast shadows. */
-    casterRadius: 48,
     /**
      * Shadow casting is paid once per cascade, so the map is worth spending only
      * on geometry that casts a shadow you can actually see. Road tiles, painted
@@ -207,7 +204,6 @@ export const POST = {
   sharpen: { edgeAmount: 0.22, colorAmount: 1.0 },
   grain: 4,
   chromaticAberration: 3.5,
-  ssao: { strength: 1.15, radius: 1.6, samples: 16, maxZ: 260 },
   glow: 0.9,
 } as const;
 
@@ -353,42 +349,184 @@ export const LIGHT = {
   startsGreen: false,
 };
 
-/* ------------------------------------------------------------------ quality -- */
+/* ----------------------------------------------------------------- graphics -- */
 
 /**
  * The knobs that decide how much work a frame costs. Defaults are tuned for a
  * smooth frame rate rather than maximum fidelity.
  */
-export const QUALITY = {
-  /** Cap the render resolution: a 2x display would otherwise shade 4x the pixels. */
-  maxPixelRatio: 1.5,
+/**
+ * What the scene looks like, per class of device.
+ *
+ * This is the one place that decides how much work a frame is allowed to be.
+ * `quality.ts` picks a level when the engine starts — from what the device
+ * actually says about itself — and drops to a cheaper one later if the frame
+ * rate will not hold. Everything downstream reads the level in force, never
+ * this table directly.
+ *
+ * Levels only ever *take away*. A feature switched off in its own block —
+ * `CAR_FX.enabled`, `SKID_MARK.enabled`, `STREET_LAMP.enabled` — stays off at
+ * every level; the level cannot turn something on that you have turned off.
+ */
+export type GraphicsLevel = "low" | "medium" | "high";
+
+export type GraphicsSettings = {
   /**
-   * And cap it again by total pixels, so a 4K window does not quietly ask for
-   * four times the shading a 1080p one does. The scene is fill-rate bound — post
-   * stack, glow, shadows — so this is the single most effective knob on a big
-   * display. 2.5M is a little over 1080p.
+   * The render resolution budget, in the terms `core/viewport.ts` uses:
+   * a cap on the device ratio, a flat cap on total pixels, and a floor so a
+   * huge window never goes to mush.
    */
-  maxPixels: 2_500_000,
-  /** ...but never render below this share of the CSS pixels, or it turns to mush. */
-  minRenderScale: 0.6,
+  maxPixelRatio: number;
+  maxPixels: number;
+  minRenderScale: number;
+
   /**
-   * Restrict the glow layer to the signal lamps. Left unrestricted it re-renders
-   * every mesh with an emissive material — most of the city, once the window
-   * emissives are revived — into its own buffer, for a halo only the traffic
-   * light actually needs.
+   * The shadow pass, measured at about 8% of a frame at its best setting.
+   *
+   *   cascades      2+ splits the map by distance, which is what keeps a shadow
+   *                 crisp near the camera and cheap far away. 1 is a single
+   *                 plain map — one depth pass instead of two, so roughly half
+   *                 the cost. 0 builds no generator at all and costs nothing
+   *   mapSize       the depth buffer's edge, in pixels
+   *   soft          percentage-closer filtering: several taps per pixel for a
+   *                 soft edge. Off is one tap
+   *   casterRadius  only geometry within this many metres of the junction is
+   *                 drawn into the map. The narrower it is, the fewer draws and
+   *                 the sharper what remains
    */
-  glowOnlySignal: true,
-  /** MSAA on top of FXAA buys very little here and costs a full resolve. */
-  msaa: 1,
+  shadows: { cascades: number; mapSize: number; soft: boolean; casterRadius: number };
+
   /**
-   * SSAO2 renders its own geometry pass before the beauty pass. The cascaded
-   * shadows already ground the scene, so it is off by default.
+   * The full-screen passes, roughly in the order of what they cost.
+   *
+   * `depthOfField` is the tilt-shift that makes the city read as a toy — the
+   * most expensive thing here by some way, and the first to go. `bloom` is the
+   * night glow off the windows and signs; `scale` is the resolution its blur
+   * runs at and `kernel` how wide it reaches, so both are cost as much as look.
+   * `null` turns it off. `msaa` on top of FXAA buys very little at this scale.
    */
-  ambientOcclusion: false,
-  /** The tilt-shift that makes the city read as a toy. Worth its cost. */
-  depthOfField: true,
-  filmGrain: false,
-  chromaticAberration: false,
+  depthOfField: boolean;
+  bloom: { scale: number; kernel: number } | null;
+  sharpen: boolean;
+  glow: boolean;
+  msaa: number;
+  grain: boolean;
+  chromaticAberration: boolean;
+
+  /**
+   * Scene content that can be left out rather than drawn cheaply. All three are
+   * additive transparencies, which is fill rate — the scarce thing on a phone.
+   *
+   *   beams      the cones of light thrown by every headlamp. Measured at 0.3%
+   *              of a frame for all sixty of them, so they survive everywhere:
+   *              a night street without headlights is not worth the 0.3%
+   *   roadMarks  skid marks and light trails, about 2%
+   *   smoke      the idle, pull-away and braking clouds
+   */
+  beams: boolean;
+  roadMarks: boolean;
+  smoke: boolean;
+
+  /** Texture filtering. 8 is crisp road markings at a glance; 1 is free. */
+  anisotropy: number;
+};
+
+export const GRAPHICS = {
+  /**
+   * Pin a level instead of detecting one. Useful for seeing what a phone gets
+   * without owning one: set it to "low" and reload.
+   */
+  force: null as GraphicsLevel | null,
+
+  /**
+   * The safety net under the detection.
+   *
+   * No amount of guessing from a user-agent string beats measuring, so the
+   * scene watches its own frame rate and drops a level when it cannot hold
+   * `targetFps`. It only ever drops: a level that climbs back up on a good
+   * second would oscillate for the whole session, and a picture that keeps
+   * changing looks worse than one that is simply a notch lower.
+   *
+   *   windowSeconds  how long a spell of bad frames has to last to count
+   *   strikes        how many such spells before it gives up a level. Two, so a
+   *                  single stutter — a wave of cars, a crash, a tab regaining
+   *                  focus — is not enough
+   */
+  adapt: {
+    enabled: true,
+    targetFps: 45,
+    windowSeconds: 4,
+    strikes: 2,
+  },
+
+  levels: {
+    /** Desktops and Apple silicon: everything on, at full resolution. */
+    high: {
+      maxPixelRatio: 1.5,
+      maxPixels: 2_500_000,
+      minRenderScale: 0.6,
+      shadows: { cascades: 2, mapSize: 1536, soft: true, casterRadius: 48 },
+      depthOfField: true,
+      bloom: { scale: 0.6, kernel: 64 },
+      sharpen: true,
+      glow: true,
+      msaa: 1,
+      grain: false,
+      chromaticAberration: false,
+      beams: true,
+      roadMarks: true,
+      smoke: true,
+      anisotropy: 8,
+    },
+
+    /**
+     * Most phones and tablets, and thin laptops: the look is intact — tilt-shift,
+     * bloom, headlights, shadows — at about half the pixels, with one shadow
+     * pass instead of two and a tighter circle of things casting into it.
+     */
+    medium: {
+      maxPixelRatio: 1.25,
+      maxPixels: 1_500_000,
+      minRenderScale: 0.55,
+      shadows: { cascades: 1, mapSize: 1024, soft: false, casterRadius: 34 },
+      depthOfField: true,
+      bloom: { scale: 0.45, kernel: 48 },
+      sharpen: false,
+      glow: true,
+      msaa: 1,
+      grain: false,
+      chromaticAberration: false,
+      beams: true,
+      roadMarks: true,
+      smoke: true,
+      anisotropy: 4,
+    },
+
+    /**
+     * Old phones, software renderers, anything that has already proved it cannot
+     * keep up. No shadow pass, no tilt-shift, no marks on the road, and a third
+     * of the pixels of the top level — but the headlights, the signal's glow and
+     * the bloom off the windows all stay, because measuring says they are nearly
+     * free and without them it stops looking like this game at all.
+     */
+    low: {
+      maxPixelRatio: 1,
+      maxPixels: 800_000,
+      minRenderScale: 0.5,
+      shadows: { cascades: 0, mapSize: 512, soft: false, casterRadius: 0 },
+      depthOfField: false,
+      bloom: { scale: 0.3, kernel: 32 },
+      sharpen: false,
+      glow: true,
+      msaa: 1,
+      grain: false,
+      chromaticAberration: false,
+      beams: true,
+      roadMarks: false,
+      smoke: true,
+      anisotropy: 1,
+    },
+  } satisfies Record<GraphicsLevel, GraphicsSettings>,
 };
 
 /* ---------------------------------------------------------------- animation -- */

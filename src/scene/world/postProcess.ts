@@ -4,76 +4,51 @@ import {
   DefaultRenderingPipeline,
   DepthOfFieldEffectBlurLevel,
   ImageProcessingConfiguration,
-  SSAO2RenderingPipeline,
   type ArcRotateCamera,
   type Mesh,
   type Scene,
 } from "@babylonjs/core";
-import { POST, QUALITY } from "../config";
+import { POST } from "../config";
 import type { Clock } from "../core/frame";
 import type { Disposable } from "../core/types";
+import { graphics } from "../quality";
 
 export type PostFx = Disposable & {
   pipeline: DefaultRenderingPipeline;
-  ssao: SSAO2RenderingPipeline | null;
-  /** Opts a mesh into the glow layer when it is restricted to the signal. */
+  /** Opts a mesh into the glow layer, which is restricted to the signal. */
   addGlowing: (mesh: Mesh) => void;
-  setDepthOfField: (on: boolean) => void;
-  setAmbientOcclusion: (on: boolean) => void;
+  /** Re-reads the graphics level. Called when the governor gives one up. */
+  apply: () => void;
 };
 
+/**
+ * The look: bloom, tilt-shift, grade, vignette — and the bill for it.
+ *
+ * Everything here is a full-screen pass or two, which is to say everything here
+ * is paid per pixel. `POST` holds what each effect looks like and the graphics
+ * level holds whether it runs at all and how big its buffers are, so the same
+ * grade survives on a phone with fewer and smaller passes behind it.
+ */
 export function createPostProcess(scene: Scene, clock: Clock, camera: ArcRotateCamera): PostFx {
-  // Contact darkening, when it is switched on: SSAO runs before the beauty
-  // pipeline so bloom and grading see an already-grounded image. It costs a
-  // whole extra geometry pass, so QUALITY decides whether it is built at all.
-  let ssao: SSAO2RenderingPipeline | null = null;
-  if (QUALITY.ambientOcclusion) {
-    ssao = new SSAO2RenderingPipeline("ssao", scene, { ssaoRatio: 0.5, blurRatio: 1 }, [camera]);
-    ssao.totalStrength = POST.ssao.strength;
-    ssao.radius = POST.ssao.radius;
-    ssao.samples = POST.ssao.samples;
-    ssao.maxZ = POST.ssao.maxZ;
-    ssao.minZAspect = 0.25;
-    ssao.expensiveBlur = false;
-    ssao.base = 0.1;
-  }
-
   const pipeline = new DefaultRenderingPipeline("beauty", true, scene, [camera]);
-
-  // FXAA alone. Stacking MSAA on top costs a full resolve for a difference you
-  // cannot see once bloom and the tilt-shift have run.
-  pipeline.samples = QUALITY.msaa;
   pipeline.fxaaEnabled = true;
 
-  // Bloom off the revived window emissives and the sun hitting glass.
-  pipeline.bloomEnabled = true;
   pipeline.bloomThreshold = POST.bloom.threshold;
   pipeline.bloomWeight = POST.bloom.weight;
-  pipeline.bloomKernel = POST.bloom.kernel;
-  pipeline.bloomScale = POST.bloom.scale;
-
-  pipeline.glowLayerEnabled = true;
-  if (pipeline.glowLayer) pipeline.glowLayer.intensity = POST.glow;
-
-  pipeline.sharpenEnabled = true;
-  pipeline.sharpen.edgeAmount = POST.sharpen.edgeAmount;
-  pipeline.sharpen.colorAmount = POST.sharpen.colorAmount;
 
   // Tilt-shift. Shallow focus is the single biggest cue that turns a city block
-  // into a toy set, which is the look we want for the game.
-  pipeline.depthOfFieldEnabled = QUALITY.depthOfField;
+  // into a toy set, and the most expensive thing in this file.
   pipeline.depthOfFieldBlurLevel = DepthOfFieldEffectBlurLevel.Low as number;
   pipeline.depthOfField.fStop = POST.dof.fStop;
   pipeline.depthOfField.focalLength = POST.dof.focalLength;
   pipeline.depthOfField.focusDistance = camera.radius * 1000;
 
-  // Grain and chromatic aberration are a full-screen pass each for an effect
-  // that barely registers at this scale, so they default to off.
-  pipeline.grainEnabled = QUALITY.filmGrain;
+  pipeline.sharpen.edgeAmount = POST.sharpen.edgeAmount;
+  pipeline.sharpen.colorAmount = POST.sharpen.colorAmount;
+
   pipeline.grain.intensity = POST.grain;
   pipeline.grain.animated = true;
 
-  pipeline.chromaticAberrationEnabled = QUALITY.chromaticAberration;
   pipeline.chromaticAberration.aberrationAmount = POST.chromaticAberration;
   pipeline.chromaticAberration.radialIntensity = 0.6;
 
@@ -101,6 +76,29 @@ export function createPostProcess(scene: Scene, clock: Clock, camera: ArcRotateC
   ip.vignetteCameraFov = camera.fov;
   ip.vignetteColor = new Color4(0.05, 0.06, 0.12, 0);
 
+  /** Everything the graphics level has an opinion about, in one place. */
+  const apply = () => {
+    pipeline.samples = graphics.msaa;
+
+    const bloom = graphics.bloom;
+    pipeline.bloomEnabled = bloom !== null;
+    if (bloom) {
+      // Assigning either of these rebuilds the blur chain, so only on a change.
+      if (pipeline.bloomKernel !== bloom.kernel) pipeline.bloomKernel = bloom.kernel;
+      if (pipeline.bloomScale !== bloom.scale) pipeline.bloomScale = bloom.scale;
+    }
+
+    pipeline.glowLayerEnabled = graphics.glow;
+    if (pipeline.glowLayer) pipeline.glowLayer.intensity = POST.glow;
+
+    pipeline.depthOfFieldEnabled = graphics.depthOfField;
+    pipeline.sharpenEnabled = graphics.sharpen;
+    pipeline.grainEnabled = graphics.grain;
+    pipeline.chromaticAberrationEnabled = graphics.chromaticAberration;
+  };
+
+  apply();
+
   // Both the camera's distance and its lens answer to the screen the game is on
   // (see `camera.ts#fitToScreen`), and two effects here are drawn in their terms:
   // the tilt-shift focuses at the camera's radius, and the vignette is shaped by
@@ -108,7 +106,7 @@ export function createPostProcess(scene: Scene, clock: Clock, camera: ArcRotateC
   // before it is written because assigning it rebuilds the grade's uniforms.
   let lens = camera.fov;
   const stopFollow = clock.each(() => {
-    if (QUALITY.depthOfField) pipeline.depthOfField.focusDistance = camera.radius * 1000;
+    if (graphics.depthOfField) pipeline.depthOfField.focusDistance = camera.radius * 1000;
     if (camera.fov === lens) return;
     lens = camera.fov;
     ip.vignetteCameraFov = lens;
@@ -116,23 +114,14 @@ export function createPostProcess(scene: Scene, clock: Clock, camera: ArcRotateC
 
   return {
     pipeline,
-    ssao,
     // Babylon treats an empty include list as "every mesh", so the first call
     // here is also what switches the glow layer from city-wide to signal-only.
-    addGlowing: (mesh) => {
-      if (QUALITY.glowOnlySignal) pipeline.glowLayer?.addIncludedOnlyMesh(mesh);
-    },
-    setDepthOfField: (on) => (pipeline.depthOfFieldEnabled = on),
-    setAmbientOcclusion: (on) => {
-      if (!ssao) return;
-      // Detaching stops the AO passes outright rather than just muting them.
-      const manager = scene.postProcessRenderPipelineManager;
-      if (on) manager.attachCamerasToRenderPipeline("ssao", camera, true);
-      else manager.detachCamerasFromRenderPipeline("ssao", camera);
-    },
+    // Left unrestricted it re-renders most of the city — every window emissive —
+    // into its own buffer, for a halo only the traffic light needs.
+    addGlowing: (mesh) => pipeline.glowLayer?.addIncludedOnlyMesh(mesh),
+    apply,
     dispose: () => {
       stopFollow();
-      ssao?.dispose();
       pipeline.dispose();
     },
   };
