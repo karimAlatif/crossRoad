@@ -39,7 +39,8 @@ src/scene/
     trafficLight.ts    the signal: geometry, lamps, breathing glow
     streetLamps.ts     lamp-post glows, instanced
   traffic/
-    road.ts            lane/wave/rules model + spawn arithmetic (pure)
+    road.ts            lane/rules model + entry arithmetic (pure)
+    flow.ts            how the cross traffic arrives: runs, gaps, the promise
     collisions.ts      footprint + separating-axis test (pure)
     traffic.ts         the simulation: drive, place, collide, crash, warm-up
     carFactory.ts      the car rig, animation layers, effect emission points
@@ -203,7 +204,25 @@ is invisible" rather than an error.
     *drawn*, never how bright it is: measured, high and low differ by 0.1%. A
     level that changed the exposure or the ambient would mean the game looked
     different on different phones, which is the problem this all came from.
-27. **`camera.position` is only recomputed when the view matrix is.** Reading it
+27. **The cross traffic's design lives in `flow.ts`**, and its top comment is
+    the spec. Runs with gaps after them, two rows on independent rhythms, a
+    speed per car clamped so nothing can catch the car ahead, and a road that
+    clears itself on a random interval — pulled forward if the junction has been
+    shut longer than `patience`. `ROAD_ONE.difficulty` (0–1) interpolates every
+    `{ easy, hard }` pair in the config block.
+28. **Two bugs that simulation caught and reading would not have.** When the road
+    stands aside, the hold must be computed from (a) *when the cars already on
+    the road finish crossing*, not when the junction next goes busy — those are
+    opposite ends of the same traffic — and (b) the **busiest row of the road**,
+    not each row's own, or a row that happens to be empty reopens while the other
+    is still going past. Each mistake silently turned a 4-second promised window
+    into about 2 seconds of real one. There is no way to see either by reading
+    the code; step the sim and measure the junction.
+29. **Cars are pooled, so anything counted with a flag on the car saturates at
+    the pool size.** Count transitions (`was <= line && is > line`) instead. This
+    produced a confident "0 cars are getting through" that was entirely the
+    measurement's fault.
+30. **`camera.position` is only recomputed when the view matrix is.** Reading it
     in a headless harness that never renders gives a stale value — call
     `camera.getViewMatrix()` first. This produced a false "the camera never
     rises" reading once.

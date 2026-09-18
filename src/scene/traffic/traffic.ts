@@ -14,17 +14,8 @@ import { createCrashEffects } from "../effects/crashEffects";
 import type { RoadSpec } from "../world/props";
 import { createCarFactory } from "./carFactory";
 import { footprint, overlaps } from "./collisions";
-import {
-  admit,
-  approach,
-  createLane,
-  makeCar,
-  startWave,
-  STOPPED,
-  type Car,
-  type Lane,
-  type Wave,
-} from "./road";
+import { createStream, keepFair, type Stream } from "./flow";
+import { admit, approach, createLane, makeCar, STOPPED, type Car, type Lane } from "./road";
 
 export type CrashEvent = {
   /** Where the impact happened, in world space. */
@@ -58,18 +49,18 @@ export function createTraffic(
   const onBrake = new Observable<Vector3>();
 
   const lanes: Lane[] = [];
+  const streams: Stream[] = [];
   let picked = 0;
   let crashes = 0;
 
   for (const road of roads) {
-    const wave: Wave = { left: 0, speed: 0, spawnGap: 0, lanes: [] };
-    const rows = ([1, -1] as const).map((side) => createLane(road, side, wave));
-    wave.lanes = rows;
-    // Open the first wave properly. Left at zero, the very first car admitted
-    // would take the counter negative and end its own wave, so every road began
-    // with a wave of exactly one car.
-    startWave(wave, rows[0].rules);
+    // Each road needs to know where the other one crosses it: that is where its
+    // cars are in the way, and the cross traffic reasons about nothing else.
+    const crossing = roads.find((other) => other !== road) ?? null;
+    const rows = ([1, -1] as const).map((side) => createLane(road, side, crossing));
     lanes.push(...rows);
+    // Only the free road has a rhythm to keep; the other one answers the light.
+    if (rows[0].rules.free) streams.push(createStream(rows));
   }
 
   // Every car starts off the road, hidden, queued at its row's gate. Nothing is
@@ -313,6 +304,9 @@ export function createTraffic(
       }
     }
 
+    // The road's own promise, before its rows are asked to let anyone on.
+    for (const stream of streams) keepFair(stream, now);
+
     for (const lane of lanes) {
       admit(lane, now);
       for (const car of lane.cars) place(car, dt);
@@ -333,6 +327,7 @@ export function createTraffic(
   }
 
   const update = (dt: number, isGreen: boolean) => step(dt, isGreen, true);
+
 
   return {
     update,

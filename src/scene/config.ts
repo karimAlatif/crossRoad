@@ -81,9 +81,9 @@ export const CAMERA = {
    *           stops just short of that
    */
   frame: {
-    width: 50,
+    width: 82,
     height: 32,
-    maxFov: 1.25,
+    maxFov: 120,
   },
 
   /**
@@ -157,7 +157,7 @@ export const SUN = {
 export const FILL = {
   skyColor: new Color3(0.24, 0.3, 0.46),
   groundColor: new Color3(0.12, 0.12, 0.16),
-  intensity: 0.55,
+  intensity: 0.50,
 } as const;
 
 export const SKY = {
@@ -217,7 +217,7 @@ export const AMBIENT = {
 export const FOG = {
   enabled: true,
   color: new Color3(0.05, 0.07, 0.14),
-  density: 0.0095,
+  density: 0.0085,
 };
 
 /** Matches the sky horizon, so any sliver the dome misses is invisible. */
@@ -263,8 +263,8 @@ export const EMISSIVE_STRENGTH = 2.5;
  */
 export const CITY_MATERIALS = {
   maxMetallic: 0.08,
-  minRoughness: 0.75,
-  roadTint: 1.8,
+  minRoughness: 0.8,
+  roadTint: 1.7,
 };
 
 /* -------------------------------------------------------------------- props -- */
@@ -307,42 +307,104 @@ export const TRAFFIC = {
 };
 
 /**
- * The cross traffic. It never stops — not for the signal and not for the car in
- * front — so it has no following model at all: every car simply holds its speed.
+ * The cross traffic: the road the player has to read.
  *
- * The gaps the player needs are built in when a car joins the road rather than
- * created by braking, which is why this road cannot rear-end itself.
+ * It never stops — not for the signal, not for the car in front — so it has no
+ * following model at all and every car simply holds the speed it arrived with.
+ * That is a design decision rather than a saving: a road that brakes is a road
+ * whose future is hidden, and this one has to be legible three seconds ahead or
+ * the player is being asked to guess. The gaps are built in when a car joins,
+ * not created by braking, which is also why this road cannot rear-end itself.
+ *
+ * `traffic/flow.ts` is where the behaviour lives, and the long comment at the
+ * top of it explains the shape of it. The short version: cars arrive in runs
+ * with a gap after each, the two rows keep their own rhythms so what the player
+ * judges is the overlap of two unrelated streams, every car has its own speed,
+ * and the road clears itself completely every so often — sooner if the dice have
+ * been unkind.
  */
 export const ROAD_ONE = {
-  /** How many cars travel together in one wave. */
-  carsPerWave: { min: 3, max: 8 },
   /**
-   * Cruise speed, drawn once per wave rather than per car.
+   * How hard the crossing is, from 0 to 1.
    *
-   * It has to be per wave: this road has no following model, so two cars in the
-   * same wave at different speeds would simply drive into each other. Varying it
-   * between waves is what keeps the stream from looking metronomic.
+   * Every pair written `{ easy, hard }` below is read through this one number,
+   * so it is the only thing that has to move to retune the whole road. 0 is a
+   * quiet street with long openings and short runs; 1 is rush hour — long runs,
+   * tight headways, mostly teasing gaps, and a road that takes its time before
+   * standing aside.
+   *
+   * It is a dial rather than three named settings on purpose: the difference
+   * between 0.5 and 0.65 is exactly the kind of thing that needs trying rather
+   * than deciding.
    */
-  speed: { min: 20, max: 23 },
+  difficulty: 0.95,
+
   /**
-   * Seconds of empty road between one wave and the next. This is the window to
-   * run the junction in, so it is the main dial for how hard the game is:
-   * longer means more room to cross.
+   * Cruise speed, drawn per car — which is what makes a gap something to judge
+   * rather than count, because the same opening is a different problem with a
+   * quick car behind it. Nothing may catch the car in front whatever this says:
+   * `flow.ts` clamps a joining car to a speed that still lets the leader leave.
    */
-  breakTime: { min: .5, max: 1.2 },
+  speed: { min: 17, max: 27 },
+
   /**
-   * Bumper gap between cars inside a wave, drawn once per wave like `speed`, so
-   * one wave runs tight and the next runs loose.
-   *
-   * The entry point itself is fixed at `max` behind the road's start marker —
-   * nothing is ever created further back than that, whichever gap a wave draws.
-   *
-   * A car takes up about `spawnGap + 5` metres and roodOne is 77 m long, so this
-   * also decides whether a wave reads as a clump: around 8 the road holds six
-   * cars a row and a wave is plainly a group; at 40 it holds two, and a wave of
-   * eight is spread over more road than exists.
+   * How much a long vehicle is pulled towards the slow end, 0 to 1. This is what
+   * makes vans lumber and hatchbacks nip, so the traffic reads as traffic rather
+   * than as a random number per car.
    */
-  spawnGap: { min: 2, max: 26 },
+  lumber: 0.6,
+
+  /** Cars in one run, per row. */
+  run: {
+    easy: { min: 1, max: 3 },
+    hard: { min: 2, max: 6 },
+  },
+
+  /** Seconds between the cars of a run. Drawn once per run, so runs differ. */
+  headway: {
+    easy: { min: 0.9, max: 1.5 },
+    hard: { min: 0.6, max: 1.0 },
+  },
+
+  /**
+   * The gap a row leaves after a run.
+   *
+   *   tease       looks like an opening, closes before a car could use it. A road
+   *               where every gap is crossable is a road you never have to watch
+   *   fair        a single car can make it, if the other row agrees
+   *   fairChance  how often the gap is a fair one rather than a tease
+   */
+  gap: {
+    tease: { min: 1.2, max: 2.2 },
+    fair: { min: 3.6, max: 5.6 },
+    fairChance: { easy: 0.8, hard: 0.3 },
+  },
+
+  /**
+   * The moment the whole road stands aside — both rows at once, a real window at
+   * the junction, and the chance to empty the queue rather than trickle it.
+   *
+   *   seconds   how long the junction stays clear
+   *   every     how long between one clearing and the next. Random, so it can be
+   *             waited for but not counted
+   *   patience  the promise: if the junction has not offered an opening worth the
+   *             name for this long, the next clearing is pulled forward to now.
+   *             This is what keeps the randomness from ever being unfair
+   *   counts    what "an opening worth the name" means, in seconds of clear
+   *             junction. About what one car needs to pull away and get across
+   */
+  clear: {
+    seconds: {
+      easy: { min: 5.0, max: 7.0 },
+      hard: { min: .5, max: .8 },
+    },
+    every: {
+      easy: { min: 6, max: 10 },
+      hard: { min: 22, max: 26 },
+    },
+    patience: { easy: 9, hard: 25 },
+    counts: 2.5,
+  },
 };
 
 /**
@@ -354,7 +416,7 @@ export const ROAD_TWO = {
   /** Bumper-to-bumper distance a queued car keeps. */
   minGap: .85,
   /** Bumper gap left when a car joins the back of the road. */
-  spawnGap: 10,
+  spawnGap: 20,
   /** How briskly a car pulls away, in units per second squared. */
   accel: 80,
   /** How hard it can slow down. Needed by `comfort` below. */

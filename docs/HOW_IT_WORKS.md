@@ -129,27 +129,74 @@ Two reasons this matters to you:
 
 ## 5. The traffic
 
-The biggest system, split into three files.
+The biggest system, split into four files.
 
 - **`traffic/road.ts`** — what a lane *is*: its direction, its rules, where cars
-  join it, and the wave arithmetic. Pure logic, no per-frame state.
+  join it. Pure logic, no per-frame state.
+- **`traffic/flow.ts`** — how the cross traffic arrives, which is the game.
 - **`traffic/traffic.ts`** — the simulation that runs each frame.
 - **`traffic/collisions.ts`** — whether two cars are touching.
 
-### The two roads behave differently
+### roodOne: the road you have to read
 
-**roodOne never stops.** It has no following model at all — every car simply
-holds its speed. The gaps you need to cross are built in when a car *joins* the
-road, not created by braking. Cars arrive in **waves**:
+It never stops — not for the signal, not for the car in front — so it has no
+following model at all and every car holds the speed it arrived with. That is a
+design decision, not a saving: a road that brakes is a road whose future is
+hidden, and this one has to be legible three seconds ahead or you are being
+asked to guess rather than judge.
 
-- `ROAD_ONE.carsPerWave` — how many cars travel together, counted **across both
-  rows**, not per row.
-- `ROAD_ONE.speed` — drawn once per wave, so every car in a wave travels at the
-  same speed. This is not cosmetic: with no following model, two speeds in one
-  wave would end in a collision.
-- `ROAD_ONE.breakTime` — the seconds of empty road between waves. **This is the
-  main difficulty dial**: it is the window you get to cross in.
-- `ROAD_ONE.spawnGap` — bumper gap inside a wave, also drawn per wave.
+Everything the crossing *feels* like therefore comes from the order cars arrive
+in, and that order is built from four ideas.
+
+**Runs and gaps.** Cars come in runs of a few, nose to tail, at a spacing drawn
+once per run — so one run arrives tight and the next strung out. After each run
+the row leaves a gap, and the gap is one of two kinds: a **tease**, which looks
+like an opening and closes before a car could use it, or a **fair** one, which a
+single brave car can make. A road where every gap is crossable is a road you
+never have to watch.
+
+**The two rows are strangers.** They used to break together, which meant the
+road was either completely full or completely empty — a metronome, and once you
+learn its beat there is no game left. Each row now keeps its own rhythm, so what
+you are actually judging is the *overlap* of two unrelated streams, which is
+irregular in a way neither row is on its own.
+
+**Every car has its own speed.** The same gap is a different problem with a
+quick car behind it, and it should not look like it. Long vehicles lean towards
+the slow end, so the thing that lumbers looks like it lumbers. No car can ever
+catch the one in front: a joining car works out how fast the leader is leaving
+and clamps itself to that — measured over five minutes at every difficulty, the
+tightest gap between two cars in a row was 1.15 m and the road never once ran
+into itself.
+
+**And the road keeps a promise.** Every so often it clears completely: both rows
+stand aside and a real window opens at the junction. The interval is random, so
+it can be waited for but not counted — but if the dice go badly and the junction
+stays shut longer than `patience`, the next clearing is pulled forward. That one
+sentence is the whole design: unpredictable, never unfair.
+
+### One dial for all of it
+
+`ROAD_ONE.difficulty` runs from 0 to 1, and every pair written `{ easy, hard }`
+in the block is read through it. Measured over four simulated minutes at each
+setting:
+
+| difficulty | cars/min | junction busy | openings/min | longest wait |
+|---|---|---|---|---|
+| 0 | 28 | 29% | 5.8 | 12 s |
+| 0.25 | 42 | 40% | 5.3 | 17 s |
+| **0.5** (default) | 57 | 54% | 3.3 | 20 s |
+| 0.75 | 71 | 58% | 3.3 | 24 s |
+| 1 | 83 | 65% | 3.0 | 27 s |
+
+An "opening" is 2.5 seconds of clear junction — about what one car needs to pull
+away and get across. The "longest wait" is the worst case in those four minutes,
+and it tracks `patience` by design: that is the promise being kept.
+
+A stand-in player that opens the light on a three-second window and closes it as
+the window runs out got **78 cars a minute across at difficulty 0 and 34 at
+difficulty 1, and never crashed once**. The difficulty changes what you can get
+through, not whether careful play is punished.
 
 **roodTwo obeys the signal.** These cars queue behind the stop line and behind
 each other, so they need the full model: `minGap`, `accel`, `brake`, and
@@ -161,8 +208,11 @@ through a red light.
 ### The entry gate
 
 A car joins at a **fixed point** just behind the road's start marker — never
-further back. Two things hold the gate shut: a clock carrying the break between
-waves, and the car already on the road being clear by `spawnGap`.
+further back. What holds the gate shut differs by road: the cross traffic works
+in *time*, from its own rhythm, and the queueing road works in *distance*, from
+the car already there. Both also check there is physical room, because a wreck
+can leave a car stopped across the entry and dropping the next one on top of it
+would be a crash nobody saw coming.
 
 Both are needed. The distance check alone cannot work on an empty road: once the
 last car has gone there is nothing to measure against, and the break between
@@ -535,7 +585,9 @@ downloaded during loading and decoded on that click.
 
 | I want to change… | Look at |
 |---|---|
-| how hard it is to cross | `ROAD_ONE.breakTime`, `ROAD_ONE.carsPerWave` |
+| **how hard it is to cross** | `ROAD_ONE.difficulty`, one number, 0 to 1 |
+| the shape of the cross traffic | `ROAD_ONE.run`, `headway`, `gap` |
+| how often the road clears | `ROAD_ONE.clear` |
 | how fast traffic moves | `ROAD_ONE.speed`, `ROAD_TWO.speed` |
 | how cars queue and pull away | `ROAD_TWO.minGap`, `accel`, `brake`, `comfort` |
 | the shudder, dive and lift | `ANIM` |
