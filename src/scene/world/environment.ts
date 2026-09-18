@@ -1,31 +1,21 @@
-import {
-  Color3,
-  MeshBuilder,
-  ReflectionProbe,
-  RenderTargetTexture,
-  Scene,
-  Vector3,
-  type Mesh,
-} from "@babylonjs/core";
+import { Color3, MeshBuilder, Scene, Vector3, type Mesh } from "@babylonjs/core";
 import { SkyMaterial } from "@babylonjs/materials/sky";
 import { CLEAR_COLOR, FOG, SKY, SUN } from "../config";
+import { createAmbient } from "./ambient";
 
 export type Environment = {
   skybox: Mesh;
   skyMaterial: SkyMaterial;
   /** Normalised direction *towards* the sun, for the key light to match. */
   sunDirection: Vector3;
-  /** Re-renders the sky into the IBL cube. Must run once the sky shader is compiled. */
-  bake: () => void;
 };
 
 /**
- * Builds an atmospheric scattering sky and bakes it into a cube map that
- * becomes the scene's IBL.
+ * The night: the sky you can see, the light it casts, and the haze between.
  *
- * Doing it this way means zero external HDR downloads: the ambient light and
- * every PBR reflection are derived from the exact sky the player is looking at,
- * so sky, reflections and the sun all agree by construction.
+ * The dome is an atmospheric scattering shader, so there is no HDR to download.
+ * What lights the city, though, is built rather than captured — see
+ * `ambient.ts` for why a rendered sky probe is the wrong thing to depend on.
  */
 export function createEnvironment(scene: Scene): Environment {
   scene.clearColor = CLEAR_COLOR;
@@ -56,21 +46,11 @@ export function createEnvironment(scene: Scene): Environment {
   skybox.isPickable = false;
   skybox.doNotSyncBoundingInfo = true;
 
-  // Render the dome once into a cube and hand it to the PBR pipeline as the
-  // environment. Mips give us a usable roughness fallback without prefiltering.
-  const probe = new ReflectionProbe("sky-ibl", SKY.probeSize, scene, true);
-  probe.renderList = [skybox];
-  scene.environmentTexture = probe.cubeTexture;
-  scene.environmentIntensity = SKY.environmentIntensity;
-
-  // The bake is deferred: on frame one the sky shader is still compiling, and a
-  // probe fired then captures pure black — which would silently leave the whole
-  // city with no ambient light at all. Assigning refreshRate resets the counter,
-  // so the caller re-arms this once shaders are ready.
-  const bake = () => {
-    probe.refreshRate = RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
-  };
-  bake();
+  // The light the city is actually lit by. Built on the CPU, so it is the same
+  // on every device and ready before the first frame rather than a frame or two
+  // later, which matters: the materials are compiled and frozen at startup and
+  // an environment that arrives afterwards may never reach them.
+  createAmbient(scene);
 
   // Haze tuned to the sky's horizon so the far city dissolves instead of ending.
   scene.fogMode = FOG.enabled ? Scene.FOGMODE_EXP2 : Scene.FOGMODE_NONE;
@@ -78,5 +58,5 @@ export function createEnvironment(scene: Scene): Environment {
   scene.fogDensity = FOG.density;
   scene.ambientColor = new Color3(0.18, 0.2, 0.24);
 
-  return { skybox, skyMaterial, sunDirection, bake };
+  return { skybox, skyMaterial, sunDirection };
 }

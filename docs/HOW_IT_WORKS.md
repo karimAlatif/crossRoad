@@ -430,9 +430,34 @@ every time it sets off, so no two cars lay quite the same marks.
 
 ## 9. Night
 
-There are only **three real lights in the whole scene**: the sun, the sky fill,
-and one spill light on the signal. Everything else that glows is flat geometry
-that adds itself to the picture.
+### What the city is lit by
+
+Four things, and only one of them is a light you would recognise as one.
+
+**The environment** (`AMBIENT`, built in `world/ambient.ts`) does most of the
+work. Every surface in the city is PBR, and a PBR surface takes most of its light
+from its surroundings rather than from lights: the sky overhead, the warm band
+along the horizon where a city throws its own light back off the haze, and the
+dark bounce off the asphalt. A road's normal points at the sky, so this is what
+makes the streets legible — `AMBIENT.intensity` is the single knob for "brighter".
+
+This used to be baked by pointing a camera at the sky dome, and it was silently
+broken. Babylon works out the diffuse half of an environment — the spherical
+harmonics that every lit surface actually samples — by reading the cube's pixels
+back off the GPU, and that read is exactly the kind of thing that works on one
+driver and returns zeros on the next. Where it returned zeros the ambient term
+was *nothing*: the same build, bright on one machine and black on another, with
+only the self-lit things surviving — glowing windows above a black street. The
+environment is now built on the CPU from three colours, with its harmonics worked
+out in JavaScript, so there is no device on which it can come out empty.
+
+**The sun** (`SUN`) is the moon, really: a dim, cold key from above with the
+shadows. **The fill** (`FILL`) is a hemispheric light — sky colour from above,
+ground bounce from below — which is the other half of what lights a road.
+
+And **three real lights in the whole scene** is the limit: the sun, the fill, and
+one spill on the signal. Everything else that glows is flat geometry that adds
+itself to the picture.
 
 This is not a shortcut, it is the reason it runs: a Babylon light costs per
 *material*, so thirty headlights would recompile every shader in the city and
@@ -452,6 +477,24 @@ then be paid for on every pixel of every surface.
   dark one has no halo at all.
 - **Fog** (`FOG`) dissolves the far city, which both frames the junction and
   hides how little is lit out there.
+
+### The city's own materials are corrected on the way in
+
+The `.glb` is a Unity export, and it arrives with two settings that make a night
+scene far darker than it needs to be (`CITY_MATERIALS`):
+
+- **`metallic: 1` on the main atlas.** A fully metallic surface has *no diffuse
+  response at all* — it is only ever a reflection of its surroundings — so the
+  pavements, the props and the building faces took nothing from the moon or the
+  fill. It is clamped to nearly zero, which is what gives the city back its own
+  colour. Glass is exempt: it is meant to be a mirror.
+- **A road atlas that is almost black**, which is right for daylight and much too
+  dark at night. `roadTint` lifts its albedo — the knob for "the streets
+  specifically are too dark", with no effect on the buildings or the mood.
+
+Together with the environment above, these took the road from 81 to 114 on a
+0–255 luminance scale, and the whole frame from 46 to 67, with the picture
+identical on the highest and lowest graphics levels.
 
 ---
 
@@ -502,6 +545,8 @@ downloaded during loading and decoded on that click.
 | headlights and tail lights | `HEADLIGHT` |
 | street lamps and their flicker | `STREET_LAMP` |
 | the signal's look and timing | `LIGHT` |
+| **how bright the scene is** | `AMBIENT.intensity`, then `FILL.intensity` |
+| the streets specifically | `CITY_MATERIALS.roadTint` |
 | night colour, fog, sky | `FOG`, `SKY`, `SUN`, `FILL`, `CLEAR_COLOR` |
 | bloom, contrast, depth of field | `POST` |
 | what each class of device gets | `GRAPHICS.levels` |

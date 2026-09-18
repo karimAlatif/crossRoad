@@ -114,9 +114,6 @@ export async function createCityScene(
   onProgress(1, "Compiling shaders");
   await scene.whenReadyAsync(true);
 
-  // Now that the sky shader exists, capture it into the IBL cube for real.
-  environment.bake();
-
   // The city never changes after this: freezing its materials skips the
   // per-draw check for whether each one still needs recompiling.
   for (const material of city.container.materials) material.freeze();

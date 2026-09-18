@@ -13,6 +13,7 @@ import {
 import {
   ASSET_URL,
   CARS_GROUP,
+  CITY_MATERIALS,
   CROSSROAD,
   CROSSROAD_MARKERS,
   EMISSIVE_REVIVE,
@@ -116,6 +117,12 @@ function polishMaterials(container: AssetContainer): void {
     material.ambientColor = Color3.White();
     material.maxSimultaneousLights = 6;
 
+    // Unity exports this atlas as pure metal, which leaves it with no diffuse
+    // response: the moon and the fill light stop reaching the city entirely and
+    // only the emissive windows survive. See CITY_MATERIALS.
+    material.metallic = Math.min(material.metallic ?? 1, CITY_MATERIALS.maxMetallic);
+    material.roughness = Math.min(material.roughness ?? 1, CITY_MATERIALS.minRoughness);
+
     if (material.emissiveTexture) {
       material.emissiveColor = EMISSIVE_REVIVE;
       material.emissiveIntensity = EMISSIVE_STRENGTH;
@@ -136,6 +143,13 @@ function polishMaterials(container: AssetContainer): void {
       material.useRadianceOverAlpha = true;
       material.useSpecularOverAlpha = true;
       material.backFaceCulling = true;
+    }
+
+    // The road atlas is nearly black, which is right for daylight and far too
+    // dark for a night street. Lifting its albedo brightens the asphalt without
+    // touching the buildings, the sky or the mood.
+    if (/road/i.test(material.name)) {
+      material.albedoColor = material.albedoColor.scale(CITY_MATERIALS.roadTint);
     }
 
     // Textures are a stylised atlas: crisp mips keep the road lines readable at

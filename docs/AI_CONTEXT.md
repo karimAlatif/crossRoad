@@ -33,7 +33,8 @@ src/scene/
     props.ts           reads the authored marker hierarchy
     camera.ts          the one view, the authored fly-in, and the pin
     lighting.ts        sun, fill, cascaded shadows
-    environment.ts     sky dome + baked IBL
+    environment.ts     sky dome, fog, and the ambient below
+    ambient.ts         the environment light: a CPU-built cube + its harmonics
     postProcess.ts     bloom, tone mapping, DoF, glow layer, SSAO
     trafficLight.ts    the signal: geometry, lamps, breathing glow
     streetLamps.ts     lamp-post glows, instanced
@@ -185,7 +186,24 @@ is invisible" rather than an error.
     imported. Importing it statically put ~10 MB of editor UI in the bundle and
     doubled the request count on first load: 2.60 MB over the wire became 2.02 MB
     across half as many files. Do not add the static import back.
-24. **`camera.position` is only recomputed when the view matrix is.** Reading it
+24. **Never depend on reading a render target back.** The scene's ambient used
+    to come from a `ReflectionProbe` of the sky dome. Babylon derives the diffuse
+    IBL — the spherical harmonics PBR samples — by calling `readPixels` on that
+    cube, which returns zeros on some drivers. When it does, the harmonics are
+    zero, the ambient term vanishes and the city goes black except for emissive
+    windows and additive headlights: the same build, bright on one device and
+    dark on another. `world/ambient.ts` builds the cube on the CPU and computes
+    the harmonics in JS instead. Do not replace it with a probe.
+25. **The .glb's materials are wrong and are corrected on load.** Unity exports
+    the city atlas with `metallic: 1` — no diffuse response, so nothing but
+    reflections — and a near-black road texture. `city.ts` clamps metallic and
+    lifts the road albedo (`CITY_MATERIALS`). If the city ever looks flat and
+    dark again after a re-export, check those first.
+26. **Lighting is deliberately not tiered.** The graphics levels change what is
+    *drawn*, never how bright it is: measured, high and low differ by 0.1%. A
+    level that changed the exposure or the ambient would mean the game looked
+    different on different phones, which is the problem this all came from.
+27. **`camera.position` is only recomputed when the view matrix is.** Reading it
     in a headless harness that never renders gives a stale value — call
     `camera.getViewMatrix()` first. This produced a false "the camera never
     rises" reading once.

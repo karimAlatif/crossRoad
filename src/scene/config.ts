@@ -155,8 +155,8 @@ export const SUN = {
 
 /** Sky-dome bounce light. Keeps shadowed façades blue instead of black. */
 export const FILL = {
-  skyColor: new Color3(0.2, 0.26, 0.42),
-  groundColor: new Color3(0.07, 0.07, 0.11),
+  skyColor: new Color3(0.24, 0.3, 0.46),
+  groundColor: new Color3(0.12, 0.12, 0.16),
   intensity: 0.55,
 } as const;
 
@@ -172,10 +172,37 @@ export const SKY = {
    */
   sunElevation: -0.18,
   size: 900,
-  /** Resolution of the cube baked off the sky dome and used as the IBL. */
-  probeSize: 256,
-  /** How much the baked sky contributes to ambient + reflections. */
-  environmentIntensity: 0.52,
+};
+
+/**
+ * The light the world itself gives off — and the reason the streets are legible.
+ *
+ * Every surface in the city is PBR, and a PBR surface takes most of its light
+ * from its environment rather than from lights. At night that environment is
+ * three things: the sky overhead, the warm band along the horizon where a city
+ * throws its light back off the haze, and the dark bounce off the asphalt. Take
+ * it away and only the things that light themselves survive — windows, signs,
+ * headlamps — which is exactly how this scene used to look on some devices, when
+ * the sky probe it used to be baked from came back black. See `world/ambient.ts`.
+ *
+ * These are *linear* colours, not sRGB, so they read darker here than they look.
+ *
+ *   sky        straight up
+ *   horizon    at eye level. A road's normal points at the sky, so this and
+ *              `sky` are what actually brighten the streets — and a warm horizon
+ *              against a cold sky is most of the night-city atmosphere
+ *   ground     straight down: what the asphalt bounces back
+ *   intensity  the whole thing at once. The single knob for "brighter"
+ *   size       the cube's edge in pixels. It is only ever seen as a reflection
+ *              in rough surfaces, so it does not need to be big; 32 is a few
+ *              kilobytes and a couple of milliseconds to build
+ */
+export const AMBIENT = {
+  sky: new Color3(0.1, 0.14, 0.27),
+  horizon: new Color3(0.3, 0.23, 0.18),
+  ground: new Color3(0.05, 0.05, 0.07),
+  intensity: 1,
+  size: 64,
 };
 
 /** Haze that dissolves the far city and keeps the eye on the junction. */
@@ -200,7 +227,7 @@ export const POST = {
   bloom: { weight: 0.45, threshold: 0.75, kernel: 64, scale: 0.6 },
   /** Tilt-shift: shallow depth of field is what makes a city read as a toy. */
   dof: { fStop: 1.4, focalLength: 62, blurLevel: 0 },
-  image: { exposure: 2.1, contrast: 1.4, saturation: 40, vignetteWeight: 2.6 },
+  image: { exposure: 2.25, contrast: 1.4, saturation: 40, vignetteWeight: 2.6 },
   sharpen: { edgeAmount: 0.22, colorAmount: 1.0 },
   grain: 4,
   chromaticAberration: 3.5,
@@ -212,6 +239,33 @@ export const POST = {
  *  neon-sign sparkle that bloom then picks up. */
 export const EMISSIVE_REVIVE = new Color3(1, 0.87, 0.62);
 export const EMISSIVE_STRENGTH = 2.5;
+
+/**
+ * How the city's own materials are corrected on the way in.
+ *
+ * The .glb is a Unity export of a stylised atlas, and it arrives with two
+ * settings that make a night scene much darker than it needs to be.
+ *
+ *   maxMetallic  Unity writes `metallic: 1` on the main city atlas. A fully
+ *                metallic surface has *no diffuse response at all* — it is only
+ *                ever the reflection of its surroundings — so the pavements, the
+ *                props and the building faces take nothing from the moon or the
+ *                fill and go dark, while the emissive windows carry on glowing.
+ *                That is the single biggest reason this scene reads as "black
+ *                city, lit windows". Glass is exempt: it is *meant* to be a
+ *                mirror, and `city.ts` sets it deliberately
+ *   minRoughness the same export writes roughness 1, which spreads what little
+ *                specular there is into nothing. Backing it off leaves a faint
+ *                sheen on wet-looking asphalt
+ *   roadTint     the road atlas is nearly black by design, which is fine in
+ *                daylight and far too dark at night. This multiplies its albedo,
+ *                so it is the knob for "the streets are too dark" specifically
+ */
+export const CITY_MATERIALS = {
+  maxMetallic: 0.08,
+  minRoughness: 0.75,
+  roadTint: 1.8,
+};
 
 /* -------------------------------------------------------------------- props -- */
 
