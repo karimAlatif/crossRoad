@@ -167,7 +167,7 @@ export const SUN = {
   /** Direction the sun *points*, i.e. light travel direction (normalised in code). */
   direction: new Vector3(-0.42, -0.62, 0.36),
   color: new Color3(0.62, 0.74, 1.0),
-  intensity: 0.58,
+  intensity: 0.8,
   shadow: {
     /** Map size and cascade count are per device: see `GRAPHICS.levels`. */
     lambda: 0.86,
@@ -190,11 +190,11 @@ export const SUN = {
 export const FILL = {
   skyColor: new Color3(0.24, 0.3, 0.46),
   groundColor: new Color3(0.12, 0.12, 0.16),
-  intensity: 0.50,
+  intensity: 0.65,
 } as const;
 
 export const SKY = {
-  turbidity: 8,
+  turbidity: 20,
   luminance: 0.22,
   rayleigh: 0.35,
   mieCoefficient: 0.006,
@@ -203,8 +203,8 @@ export const SKY = {
    * Height of the sky's own sun. Negative puts it under the horizon, which is
    * what turns the dome to night; nearer zero leaves more dusk glow low down.
    */
-  sunElevation: -0.18,
-  size: 900,
+  sunElevation: -0.5,
+  size: 2500,
 };
 
 /**
@@ -250,7 +250,7 @@ export const AMBIENT = {
 export const FOG = {
   enabled: true,
   color: new Color3(0.05, 0.07, 0.14),
-  density: 0.0085,
+  density: 0.0080,
 };
 
 /** Matches the sky horizon, so any sliver the dome misses is invisible. */
@@ -271,7 +271,7 @@ export const POST = {
  *  baked into `Emissive_01.jpg`. We put it back — this is the night-window /
  *  neon-sign sparkle that bloom then picks up. */
 export const EMISSIVE_REVIVE = new Color3(1, 0.87, 0.62);
-export const EMISSIVE_STRENGTH = 2.5;
+export const EMISSIVE_STRENGTH = 2.8;
 
 /**
  * How the city's own materials are corrected on the way in.
@@ -297,7 +297,7 @@ export const EMISSIVE_STRENGTH = 2.5;
 export const CITY_MATERIALS = {
   maxMetallic: 0.08,
   minRoughness: 0.8,
-  roadTint: 1.7,
+  roadTint: 2,
 };
 
 /* -------------------------------------------------------------------- props -- */
@@ -504,7 +504,7 @@ export const CRASH = {
    */
   sparks: { capacity: 800, count: 45, size: { min: 8, max: 16 } },
 };
-
+//traffic light
 export const LIGHT = {
   poleHeight: 4.6,
   head: { width: 1.6, height: 3.0, depth: 0.26 },
